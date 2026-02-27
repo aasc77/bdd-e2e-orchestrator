@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agent-bridge": {
+      "command": "node",
+      "args": ["REPLACE_WITH_ABSOLUTE_PATH_TO_ORCHESTRATOR/mcp-bridge/index.js"]
+    }
+  }
+}

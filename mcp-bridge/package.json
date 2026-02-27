@@ -1,0 +1,14 @@
+{
+  "name": "agent-mcp-bridge",
+  "version": "1.0.0",
+  "description": "MCP server for inter-agent communication via file-based mailbox",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

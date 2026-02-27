@@ -1,0 +1,36 @@
+# Orchestrator Shared Configuration (defaults for all projects)
+
+# LLM settings (local model via Ollama)
+llm:
+  provider: ollama
+  model: qwen3:8b
+  base_url: http://localhost:11434
+  temperature: 0.3
+  max_tokens: 1024
+  disable_thinking: true
+
+# Polling settings
+polling:
+  interval_seconds: 3
+
+# Task settings
+tasks:
+  max_attempts_per_task: 5
+
+# Logging
+logging:
+  file: orchestrator.log
+  level: INFO
+  console: true
+
+# tmux defaults (can be overridden per project)
+tmux:
+  nudge_prompt: "You have new messages. Use the check_messages MCP tool with your role to read and act on them."
+  nudge_cooldown_seconds: 30
+
+# Agent defaults (pane numbers: writer=0, executor=1, orch=2)
+agents:
+  writer:
+    pane: qa.0
+  executor:
+    pane: qa.1
