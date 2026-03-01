@@ -551,54 +551,6 @@ INSPEOF
             echo -e '\n# Test reports\nreports/' >> "$REPO_DIR/.gitignore"
         fi
 
-        # Create test-data.yaml
-        PAGE_YAML=""
-        for i in "${!UI_PAGES[@]}"; do
-            page="${UI_PAGES[$i]}"
-            data="${UI_TEST_DATA[$i]:-}"
-            PAGE_YAML+="  \"${page}\":\n    test_data: \"${data}\"\n"
-        done
-
-        cat > "$REPO_DIR/e2e/support/test-data.yaml" <<TDEOF
-global:
-  credentials:
-    email: "${TEST_USER_EMAIL:-}"
-    password: "${TEST_USER_PASSWORD:-}"
-pages:
-$(echo -e "$PAGE_YAML")
-TDEOF
-        info "Created e2e/support/test-data.yaml"
-
-        # Create env-setup.sh
-        cat > "$REPO_DIR/e2e/support/env-setup.sh" <<'ENVEOF'
-#!/bin/bash
-set -e
-echo "Running environment setup..."
-# Customize: reset accounts, seed data, call APIs
-echo "Environment setup complete."
-ENVEOF
-        chmod +x "$REPO_DIR/e2e/support/env-setup.sh"
-
-        # Inject user's command if provided
-        if [[ -n "${ENV_SETUP_CMD:-}" ]]; then
-            sed -i '' "s|# Customize:.*|$ENV_SETUP_CMD|" "$REPO_DIR/e2e/support/env-setup.sh"
-        fi
-        info "Created e2e/support/env-setup.sh"
-
-        # Create env-teardown.sh
-        cat > "$REPO_DIR/e2e/support/env-teardown.sh" <<'ENVTDEOF'
-#!/bin/bash
-set -e
-echo "Running environment teardown..."
-# Customize: cleanup test artifacts
-echo "Environment teardown complete."
-ENVTDEOF
-        chmod +x "$REPO_DIR/e2e/support/env-teardown.sh"
-        if [[ -n "${ENV_TEARDOWN_CMD:-}" ]]; then
-            sed -i '' "s|# Customize:.*|$ENV_TEARDOWN_CMD|" "$REPO_DIR/e2e/support/env-teardown.sh"
-        fi
-        info "Created e2e/support/env-teardown.sh"
-
         # Commit scaffolding
         git -C "$REPO_DIR" add -A
         git -C "$REPO_DIR" commit --quiet -m "chore: add Playwright+Cucumber e2e scaffolding"
@@ -608,6 +560,74 @@ ENVTDEOF
     fi
 else
     info "Playwright/Cucumber config already exists -- skipping scaffolding"
+fi
+
+# ─── Phase 4c: Test data + env scripts (always created) ─────────────────────
+mkdir -p "$REPO_DIR/e2e/support"
+
+# Create test-data.yaml (skip if exists)
+if [[ ! -f "$REPO_DIR/e2e/support/test-data.yaml" ]]; then
+    PAGE_YAML=""
+    for i in "${!UI_PAGES[@]}"; do
+        page="${UI_PAGES[$i]}"
+        data="${UI_TEST_DATA[$i]:-}"
+        PAGE_YAML+="  \"${page}\":\n    test_data: \"${data}\"\n"
+    done
+
+    cat > "$REPO_DIR/e2e/support/test-data.yaml" <<TDEOF
+global:
+  credentials:
+    email: "${TEST_USER_EMAIL:-}"
+    password: "${TEST_USER_PASSWORD:-}"
+pages:
+$(echo -e "$PAGE_YAML")
+TDEOF
+    info "Created e2e/support/test-data.yaml"
+else
+    info "e2e/support/test-data.yaml already exists -- skipped"
+fi
+
+# Create env-setup.sh (skip if exists)
+if [[ ! -f "$REPO_DIR/e2e/support/env-setup.sh" ]]; then
+    cat > "$REPO_DIR/e2e/support/env-setup.sh" <<'ENVEOF'
+#!/bin/bash
+set -e
+echo "Running environment setup..."
+# Customize: reset accounts, seed data, call APIs
+echo "Environment setup complete."
+ENVEOF
+    chmod +x "$REPO_DIR/e2e/support/env-setup.sh"
+
+    if [[ -n "${ENV_SETUP_CMD:-}" ]]; then
+        sed -i '' "s|# Customize:.*|$ENV_SETUP_CMD|" "$REPO_DIR/e2e/support/env-setup.sh"
+    fi
+    info "Created e2e/support/env-setup.sh"
+else
+    info "e2e/support/env-setup.sh already exists -- skipped"
+fi
+
+# Create env-teardown.sh (skip if exists)
+if [[ ! -f "$REPO_DIR/e2e/support/env-teardown.sh" ]]; then
+    cat > "$REPO_DIR/e2e/support/env-teardown.sh" <<'ENVTDEOF'
+#!/bin/bash
+set -e
+echo "Running environment teardown..."
+# Customize: cleanup test artifacts
+echo "Environment teardown complete."
+ENVTDEOF
+    chmod +x "$REPO_DIR/e2e/support/env-teardown.sh"
+    if [[ -n "${ENV_TEARDOWN_CMD:-}" ]]; then
+        sed -i '' "s|# Customize:.*|$ENV_TEARDOWN_CMD|" "$REPO_DIR/e2e/support/env-teardown.sh"
+    fi
+    info "Created e2e/support/env-teardown.sh"
+else
+    info "e2e/support/env-teardown.sh already exists -- skipped"
+fi
+
+# Commit test data files if any were created
+if [[ -n "$(git -C "$REPO_DIR" status --porcelain e2e/support/ 2>/dev/null)" ]]; then
+    git -C "$REPO_DIR" add e2e/support/test-data.yaml e2e/support/env-setup.sh e2e/support/env-teardown.sh 2>/dev/null || true
+    git -C "$REPO_DIR" commit --quiet -m "chore: add test data and env setup files" 2>/dev/null || true
 fi
 
 # ─── Phase 5: Confirmation summary ───────────────────────────────────────────
