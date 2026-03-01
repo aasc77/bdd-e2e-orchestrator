@@ -32,11 +32,14 @@ The wizard asks you to pick a mode:
 1. **PM Pre-Flight** -- generate a PRD from a vague idea (exits after, run wizard again for mode 2)
 2. **BDD E2E Testing** -- write & run Playwright+Cucumber tests against a staging URL
 
-For mode 2, you'll be prompted for:
-- **Staging URL** -- the base URL to test against (e.g., `https://staging.example.com`)
-- **Pages** -- relative paths to test (e.g., `/login`, `/dashboard`)
+For mode 2, an agentic wizard launches and guides you through:
+- **Staging URL** -- the base URL to test against
+- **Pages** -- which routes to test (can auto-discover from repo)
+- **Test credentials** -- email/password for auth (stored in `e2e/support/test-data.yaml`)
+- **Environment setup/teardown** -- commands to run before/after tests
+- **PRD import** -- optionally read a PRD to extract pages and acceptance criteria
 
-The wizard creates worktrees, config, tasks, Playwright+Cucumber scaffolding (`e2e/` directory, `cucumber.js`, `tsconfig.json`), and agent `CLAUDE.md` files.
+The wizard creates worktrees, config, tasks, Playwright+Cucumber scaffolding (`e2e/` directory, `cucumber.js`, `tsconfig.json`), test data files, and agent `CLAUDE.md` files.
 
 ## 4. Customize
 
@@ -46,6 +49,15 @@ Edit the generated files before launching:
 vi my-bdd/projects/<name>/tasks.json                 # adjust task descriptions
 vi <your-repo>/.worktrees/writer/CLAUDE.md           # Writer: selectors, patterns
 vi <your-repo>/.worktrees/executor/CLAUDE.md         # Executor: test environment
+vi <your-repo>/e2e/support/test-data.yaml            # test credentials and per-page data
+vi <your-repo>/e2e/support/env-setup.sh              # pre-test environment setup
+vi <your-repo>/e2e/support/env-teardown.sh           # post-test cleanup
+```
+
+To update test credentials securely:
+```bash
+my-bdd/scripts/manage-test-data.sh <name>            # view credentials
+my-bdd/scripts/manage-test-data.sh <name> --set      # update interactively
 ```
 
 The more project context you add to each `CLAUDE.md`, the better the agents perform.
