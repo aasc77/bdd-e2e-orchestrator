@@ -617,10 +617,36 @@ def assign_task_to_writer(task: dict):
 
     base_url = config.get("ui", {}).get("base_url", "")
     page_url = task.get("page_url", "")
+    test_focus = task.get("test_focus", "")
+    acceptance_criteria = task.get("acceptance_criteria", [])
+
+    # Load test data if available
+    test_data = {}
+    if repo_dir:
+        test_data_path = Path(repo_dir) / "e2e" / "support" / "test-data.yaml"
+        if test_data_path.exists():
+            with open(test_data_path) as f:
+                test_data = yaml.safe_load(f) or {}
+
+    global_creds = test_data.get("global", {}).get("credentials", {})
+    page_test_data = test_data.get("pages", {}).get(page_url, {})
 
     instructions = (
         f"Write BDD feature files and step definitions for the {page_url} page. "
         f"The staging URL is {base_url}{page_url}. "
+        f"FIRST: Inspect the page structure by running: npx ts-node e2e/support/inspect.ts {base_url}{page_url} "
+        "to discover available selectors and elements. "
+    )
+    if test_focus:
+        instructions += f"Focus on testing: {test_focus}. "
+    if acceptance_criteria:
+        instructions += "Acceptance criteria:\n" + "\n".join(f"- {ac}" for ac in acceptance_criteria) + "\n"
+    if global_creds.get("email"):
+        instructions += (
+            f"Test credentials are available in e2e/support/test-data.yaml "
+            f"(email: {global_creds['email']}). Use them for auth steps. "
+        )
+    instructions += (
         "Create: (1) a .feature file in e2e/features/, (2) step definitions in e2e/steps/, "
         "(3) any needed Page Objects in e2e/pages/. "
         "Validate syntax with: npx cucumber-js --dry-run. "
@@ -634,6 +660,9 @@ def assign_task_to_writer(task: dict):
         "description": task["description"],
         "page_url": page_url,
         "base_url": base_url,
+        "test_focus": test_focus,
+        "acceptance_criteria": acceptance_criteria,
+        "test_data": {"credentials": global_creds, "page_data": page_test_data},
         "instructions": instructions,
     }
 
@@ -674,12 +703,30 @@ def handle_writer_message(message: dict):
         log_file_changes(task_id, "writer", executor_dir, writer_branch)
 
     base_url = config.get("ui", {}).get("base_url", "")
+    env_setup = config.get("env_setup", {})
+    setup_cmd = env_setup.get("setup_command") or (f"bash {env_setup.get('setup_script', '')}" if env_setup.get("setup_script") else "")
+    teardown_cmd = env_setup.get("teardown_command") or (f"bash {env_setup.get('teardown_script', '')}" if env_setup.get("teardown_script") else "")
+
+    # Load test data for executor
+    test_data = {}
+    if repo_dir:
+        test_data_path = Path(repo_dir) / "e2e" / "support" / "test-data.yaml"
+        if test_data_path.exists():
+            with open(test_data_path) as f:
+                test_data = yaml.safe_load(f) or {}
+
     executor_instructions = (
         "Feature files and step definitions have been merged into your worktree. "
+    )
+    if setup_cmd.strip():
+        executor_instructions += f"BEFORE running tests, execute environment setup: {setup_cmd}. If setup fails, report failure immediately. "
+    executor_instructions += (
         f"Run the Cucumber tests against the staging URL ({base_url}): "
         "npx cucumber-js --format progress --format json:reports/results.json. "
-        "Report results using the send_executor_results MCP tool."
     )
+    if teardown_cmd.strip():
+        executor_instructions += f"AFTER tests (regardless of pass/fail), run teardown: {teardown_cmd}. "
+    executor_instructions += "Report results using the send_executor_results MCP tool."
 
     executor_content = {
         "task_id": task["id"],
@@ -687,6 +734,8 @@ def handle_writer_message(message: dict):
         "files_changed": content.get("files_changed", []),
         "feature_files": content.get("feature_files", []),
         "branch": f"writer/{task_id}",
+        "env_setup": env_setup,
+        "test_data": test_data.get("global", {}),
         "instructions": executor_instructions,
     }
 

@@ -29,12 +29,27 @@ e2e/
 - Include `@smoke`, `@regression`, or `@wip` tags as appropriate
 - Validate syntax with `npx cucumber-js --dry-run` before handoff
 
+### Before Writing Tests
+1. Inspect the target page to discover available elements:
+   ```
+   npx ts-node e2e/support/inspect.ts <staging_url><page_path>
+   ```
+2. Review the output to identify: forms, buttons, navigation, `data-testid` attributes
+3. Use discovered selectors in your Page Objects for reliable tests
+
+### Test Data
+- Read `e2e/support/test-data.yaml` for test credentials and page-specific data
+- Use global credentials in login/auth Given steps
+- Reference the YAML file in step defs rather than hardcoding values
+
 ### For Each Task
-1. Create the `.feature` file in `e2e/features/`
-2. Create step definitions in `e2e/steps/`
-3. Create or update Page Objects in `e2e/pages/`
-4. Run `npx cucumber-js --dry-run` to verify syntax
-5. Commit and hand off to Executor
+1. **Inspect the page** using the inspect script (see above)
+2. Read `e2e/support/test-data.yaml` for credentials and page-specific test data
+3. Create the `.feature` file in `e2e/features/`
+4. Create step definitions in `e2e/steps/`
+5. Create or update Page Objects in `e2e/pages/`
+6. Run `npx cucumber-js --dry-run` to verify syntax
+7. Commit and hand off to Executor
 
 ## FILE_TARGET: executor_agent/CLAUDE.md
 
@@ -50,6 +65,14 @@ For each test run, report:
 - Total scenarios passed / failed
 - For failures: step name, error message, screenshot path
 - Any environment issues (staging down, timeouts, flaky selectors)
+
+### Environment Setup/Teardown
+- Run `bash e2e/support/env-setup.sh` BEFORE tests (if it exists)
+- Run `bash e2e/support/env-teardown.sh` AFTER tests (regardless of pass/fail)
+- If setup fails, report failure immediately -- do not run tests
+
+### Test Data
+- Credentials in `e2e/support/test-data.yaml` -- use for auth if needed
 
 ### Guidelines
 - Do NOT modify feature files or step definitions -- only run them
