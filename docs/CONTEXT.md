@@ -20,7 +20,7 @@ The wizard (`new-project.sh`) presents two options:
 
 1. **PM Pre-Flight** -- Launches Claude Code as a PM agent to generate a PRD from a vague idea. Standalone step that exits after generating `prd.md`. Does not start the BDD pipeline. Prompt template: `docs/pm_agent.md`.
 
-2. **BDD E2E Testing (`mode: bdd`)** -- Writer creates Gherkin feature files + step definitions + Page Objects, Executor runs Playwright+Cucumber tests against a staging URL. Agent prompts loaded from `docs/BDD PROMPTS.md`. Includes staging URL prompt and page discovery for task generation.
+2. **BDD E2E Testing (`mode: bdd`)** -- Launches an agentic setup wizard that collects staging URL, pages, test credentials, and environment setup commands via conversation. Writer creates Gherkin feature files + step definitions + Page Objects, Executor runs Playwright+Cucumber tests against the staging URL. Agent prompts loaded from `docs/BDD PROMPTS.md`, wizard prompt from `docs/wizard_agent.md`.
 
 ## Git Worktree Layout
 
@@ -35,7 +35,8 @@ Each project uses a single repo with two worktrees:
 │   ├── features/                   # .feature files (Gherkin)
 │   ├── steps/                      # Step definitions (TypeScript)
 │   ├── pages/                      # Page Object Models
-│   └── support/                    # World class, hooks
+│   │   └── yaml-refs/              # YAML page objects from source repo (existing mode)
+│   └── support/                    # World class, hooks, test-data.yaml, env scripts
 ```
 
 Each worktree has its own `CLAUDE.md` with agent-specific instructions and MCP communication protocol.
@@ -86,6 +87,18 @@ tmux:
 
 ui:
   base_url: https://staging.example.com
+
+test_credentials:
+  email: test@example.com
+  password: ""
+
+env_setup:
+  setup_script: e2e/support/env-setup.sh
+  teardown_script: e2e/support/env-teardown.sh
+  setup_command: ""
+  teardown_command: ""
+
+features_mode: "new"  # "new" (write features from scratch) or "existing" (reuse .feature files)
 
 agents:
   writer:

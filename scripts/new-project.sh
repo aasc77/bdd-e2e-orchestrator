@@ -227,46 +227,122 @@ if [[ -d "$ROOT_DIR/projects/$PROJECT_KEY" ]]; then
     exit 1
 fi
 
-# ─── Phase 2b: Gather staging URL and pages ──────────────────────────────────
-echo ""
-echo "  ${BOLD}Staging URL${RESET}"
-echo "  Enter the base URL of the staging environment to test against."
-echo ""
-read -r -p "  Base URL (e.g., https://staging.example.com): " UI_BASE_URL
-
-if [[ -z "$UI_BASE_URL" ]]; then
-    error "Base URL is required for BDD E2E testing."
+# ─── Phase 2b: Agentic wizard ──────────────────────────────────────────────
+WIZARD_PROMPT_FILE="$ROOT_DIR/docs/wizard_agent.md"
+if [[ ! -f "$WIZARD_PROMPT_FILE" ]]; then
+    error "Wizard prompt file not found: $WIZARD_PROMPT_FILE"
     exit 1
 fi
 
-# Strip trailing slash
-UI_BASE_URL="${UI_BASE_URL%/}"
+WIZARD_PROMPT=$(extract_prompt "$WIZARD_PROMPT_FILE" "wizard_agent/CLAUDE.md")
 
+WIZARD_TMPDIR=$(mktemp -d)
+cat > "$WIZARD_TMPDIR/CLAUDE.md" <<WIZEOF
+$WIZARD_PROMPT
+
+---
+
+## Project Context
+- Project: $PROJECT_NAME
+- Repo dir: $REPO_DIR
+- Repo has files: $(ls "$REPO_DIR" 2>/dev/null | head -20 | tr '\n' ', ')
+
+## Output
+Write the setup data to a file called \`wizard-output.json\` in this directory.
+WIZEOF
+
+# Give the agent read access to the repo
+ln -sf "$REPO_DIR" "$WIZARD_TMPDIR/repo"
+
+info "Launching setup wizard..."
+echo "  The wizard will ask you about your testing needs."
 echo ""
-echo "  ${BOLD}Pages to test${RESET}"
-echo "  Enter page paths to generate tasks (one per line, relative paths)."
-echo "  Press Enter on an empty line when done."
-echo ""
 
-UI_PAGES=()
-while true; do
-    read -r -p "  Page path (e.g., /login): " PAGE_PATH
-    if [[ -z "$PAGE_PATH" ]]; then
-        break
-    fi
-    # Ensure leading slash
-    if [[ "$PAGE_PATH" != /* ]]; then
-        PAGE_PATH="/$PAGE_PATH"
-    fi
-    UI_PAGES+=("$PAGE_PATH")
-done
+(cd "$WIZARD_TMPDIR" && claude --dangerously-skip-permissions) || true
 
-if [[ ${#UI_PAGES[@]} -eq 0 ]]; then
-    warn "No pages specified. Adding default /login page."
-    UI_PAGES=("/")
+# Read wizard output
+WIZARD_OUTPUT="$WIZARD_TMPDIR/wizard-output.json"
+if [[ ! -f "$WIZARD_OUTPUT" ]]; then
+    error "Wizard did not produce wizard-output.json. Aborting."
+    exit 1
 fi
 
-info "Will create ${#UI_PAGES[@]} BDD task(s) against $UI_BASE_URL"
+# Parse wizard output into variables
+UI_BASE_URL=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('base_url',''))")
+UI_BASE_URL="${UI_BASE_URL%/}"
+
+if [[ -z "$UI_BASE_URL" ]]; then
+    error "No base URL in wizard output."
+    exit 1
+fi
+
+# Parse pages into arrays
+PAGE_COUNT=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(len(d.get('pages',[])))")
+UI_PAGES=()
+UI_FOCUS=()
+UI_CRITERIA=()
+UI_TEST_DATA=()
+for (( idx=0; idx<PAGE_COUNT; idx++ )); do
+    UI_PAGES+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['pages'][$idx]['path'])")")
+    UI_FOCUS+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['pages'][$idx].get('test_focus',''))")")
+    UI_TEST_DATA+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['pages'][$idx].get('test_data',''))")")
+    CRITERIA=$(python3 -c "import json,sys; d=json.load(open('$WIZARD_OUTPUT')); print(json.dumps(d['pages'][$idx].get('acceptance_criteria',[])))")
+    UI_CRITERIA+=("$CRITERIA")
+done
+
+# Parse credentials
+TEST_USER_EMAIL=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('credentials',{}).get('email',''))")
+TEST_USER_PASSWORD=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('credentials',{}).get('password',''))")
+
+# Parse env setup
+ENV_SETUP_CMD=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('env_setup',{}).get('setup_command',''))")
+ENV_TEARDOWN_CMD=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('env_setup',{}).get('teardown_command',''))")
+
+# Parse PRD path
+PRD_PATH=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('prd_path',''))")
+
+# Parse features mode
+FEATURES_MODE=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('features_mode','new'))")
+FEATURES_DIR=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('features_dir',''))")
+
+# Parse feature files array
+FEATURE_FILE_COUNT=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(len(d.get('feature_files',[])))")
+FEATURE_SOURCE_PATHS=()
+FEATURE_NAMES=()
+FEATURE_SCENARIO_COUNTS=()
+for (( idx=0; idx<FEATURE_FILE_COUNT; idx++ )); do
+    FEATURE_SOURCE_PATHS+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['feature_files'][$idx]['source_path'])")")
+    FEATURE_NAMES+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['feature_files'][$idx]['feature_name'])")")
+    FEATURE_SCENARIO_COUNTS+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['feature_files'][$idx].get('scenario_count',0))")")
+done
+
+# Parse page object files
+PO_FILE_COUNT=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(len(d.get('page_object_files',[])))")
+PO_FILES=()
+for (( idx=0; idx<PO_FILE_COUNT; idx++ )); do
+    PO_FILES+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['page_object_files'][$idx])")")
+done
+
+if [[ "$FEATURES_MODE" != "existing" ]] && [[ ${#UI_PAGES[@]} -eq 0 ]]; then
+    warn "No pages in wizard output. Adding default / page."
+    UI_PAGES=("/")
+    UI_FOCUS=("")
+    UI_CRITERIA=("[]")
+    UI_TEST_DATA=("")
+fi
+
+info "Base URL: $UI_BASE_URL"
+info "Features mode: $FEATURES_MODE"
+if [[ "$FEATURES_MODE" == "existing" ]]; then
+    info "Found ${#FEATURE_SOURCE_PATHS[@]} existing .feature file(s)"
+    info "Found ${#PO_FILES[@]} YAML page object file(s)"
+    info "Will create ${#FEATURE_SOURCE_PATHS[@]} BDD task(s)"
+else
+    info "Pages: ${UI_PAGES[*]}"
+    info "Will create ${#UI_PAGES[@]} BDD task(s)"
+fi
+info "Credentials: ${TEST_USER_EMAIL:-(none)}"
+info "Env setup: ${ENV_SETUP_CMD:-(none)}"
 
 # ─── Phase 3: Initialize git repo ────────────────────────────────────────────
 if [[ -d "$REPO_DIR/.git" ]]; then
@@ -462,6 +538,43 @@ AfterStep(async function (this: BddWorld, { result }) {
 HOOKEOF
         info "Created e2e/support/hooks.ts (Before/After/AfterStep)"
 
+        # Create page inspection script
+        cat > "$REPO_DIR/e2e/support/inspect.ts" <<'INSPEOF'
+// Page inspector -- run with: npx ts-node e2e/support/inspect.ts <url>
+// Outputs interactive elements to help Writer agent discover selectors
+import { chromium } from '@playwright/test';
+
+const url = process.argv[2];
+if (!url) {
+  console.error('Usage: npx ts-node e2e/support/inspect.ts <url>');
+  process.exit(1);
+}
+
+(async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+
+  const elements = await page.$$eval(
+    '[data-testid], button, input, select, textarea, a, form, [role]',
+    els => els.map(e => ({
+      tag: e.tagName.toLowerCase(),
+      testid: e.getAttribute('data-testid'),
+      role: e.getAttribute('role'),
+      type: e.getAttribute('type'),
+      name: e.getAttribute('name'),
+      placeholder: e.getAttribute('placeholder'),
+      href: e.tagName === 'A' ? e.getAttribute('href') : undefined,
+      text: e.textContent?.trim().slice(0, 60) || undefined,
+    })).filter(el => el.testid || el.role || el.tag !== 'a' || el.href)
+  );
+
+  console.log(JSON.stringify(elements, null, 2));
+  await browser.close();
+})();
+INSPEOF
+        info "Created e2e/support/inspect.ts (page inspector)"
+
         # Add reports/ to .gitignore
         if ! grep -q '^reports/' "$REPO_DIR/.gitignore" 2>/dev/null; then
             echo -e '\n# Test reports\nreports/' >> "$REPO_DIR/.gitignore"
@@ -476,6 +589,104 @@ HOOKEOF
     fi
 else
     info "Playwright/Cucumber config already exists -- skipping scaffolding"
+fi
+
+# ─── Phase 4c: Test data + env scripts (always created) ─────────────────────
+mkdir -p "$REPO_DIR/e2e/support"
+
+# Create test-data.yaml (skip if exists)
+if [[ ! -f "$REPO_DIR/e2e/support/test-data.yaml" ]]; then
+    PAGE_YAML=""
+    for i in "${!UI_PAGES[@]}"; do
+        page="${UI_PAGES[$i]}"
+        data="${UI_TEST_DATA[$i]:-}"
+        PAGE_YAML+="  \"${page}\":\n    test_data: \"${data}\"\n"
+    done
+
+    cat > "$REPO_DIR/e2e/support/test-data.yaml" <<TDEOF
+global:
+  credentials:
+    email: "${TEST_USER_EMAIL:-}"
+    password: "${TEST_USER_PASSWORD:-}"
+pages:
+$(echo -e "$PAGE_YAML")
+TDEOF
+    info "Created e2e/support/test-data.yaml"
+else
+    info "e2e/support/test-data.yaml already exists -- skipped"
+fi
+
+# Create env-setup.sh (skip if exists)
+if [[ ! -f "$REPO_DIR/e2e/support/env-setup.sh" ]]; then
+    cat > "$REPO_DIR/e2e/support/env-setup.sh" <<'ENVEOF'
+#!/bin/bash
+set -e
+echo "Running environment setup..."
+# Customize: reset accounts, seed data, call APIs
+echo "Environment setup complete."
+ENVEOF
+    chmod +x "$REPO_DIR/e2e/support/env-setup.sh"
+
+    if [[ -n "${ENV_SETUP_CMD:-}" ]]; then
+        sed -i '' "s|# Customize:.*|$ENV_SETUP_CMD|" "$REPO_DIR/e2e/support/env-setup.sh"
+    fi
+    info "Created e2e/support/env-setup.sh"
+else
+    info "e2e/support/env-setup.sh already exists -- skipped"
+fi
+
+# Create env-teardown.sh (skip if exists)
+if [[ ! -f "$REPO_DIR/e2e/support/env-teardown.sh" ]]; then
+    cat > "$REPO_DIR/e2e/support/env-teardown.sh" <<'ENVTDEOF'
+#!/bin/bash
+set -e
+echo "Running environment teardown..."
+# Customize: cleanup test artifacts
+echo "Environment teardown complete."
+ENVTDEOF
+    chmod +x "$REPO_DIR/e2e/support/env-teardown.sh"
+    if [[ -n "${ENV_TEARDOWN_CMD:-}" ]]; then
+        sed -i '' "s|# Customize:.*|$ENV_TEARDOWN_CMD|" "$REPO_DIR/e2e/support/env-teardown.sh"
+    fi
+    info "Created e2e/support/env-teardown.sh"
+else
+    info "e2e/support/env-teardown.sh already exists -- skipped"
+fi
+
+# Commit test data files if any were created
+if [[ -n "$(git -C "$REPO_DIR" status --porcelain e2e/support/ 2>/dev/null)" ]]; then
+    git -C "$REPO_DIR" add e2e/support/test-data.yaml e2e/support/env-setup.sh e2e/support/env-teardown.sh 2>/dev/null || true
+    git -C "$REPO_DIR" commit --quiet -m "chore: add test data and env setup files" 2>/dev/null || true
+fi
+
+# ─── Phase 4d: Copy existing features + page objects ─────────────────────────
+if [[ "$FEATURES_MODE" == "existing" ]]; then
+    mkdir -p "$REPO_DIR/e2e/features"
+    mkdir -p "$REPO_DIR/e2e/pages/yaml-refs"
+
+    for src in "${FEATURE_SOURCE_PATHS[@]}"; do
+        if [[ -f "$REPO_DIR/$src" ]]; then
+            cp "$REPO_DIR/$src" "$REPO_DIR/e2e/features/"
+            info "Copied $src -> e2e/features/"
+        else
+            warn "Feature file not found: $src"
+        fi
+    done
+
+    for po in "${PO_FILES[@]}"; do
+        if [[ -f "$REPO_DIR/$po" ]]; then
+            cp "$REPO_DIR/$po" "$REPO_DIR/e2e/pages/yaml-refs/"
+            info "Copied $po -> e2e/pages/yaml-refs/"
+        else
+            warn "Page object file not found: $po"
+        fi
+    done
+
+    # Commit copied files
+    if [[ -n "$(git -C "$REPO_DIR" status --porcelain e2e/ 2>/dev/null)" ]]; then
+        git -C "$REPO_DIR" add e2e/features/ e2e/pages/yaml-refs/ 2>/dev/null || true
+        git -C "$REPO_DIR" commit --quiet -m "chore: copy existing feature files and page objects to e2e/" 2>/dev/null || true
+    fi
 fi
 
 # ─── Phase 5: Confirmation summary ───────────────────────────────────────────
@@ -542,6 +753,18 @@ repo_dir: $REPO_DIR
 ui:
   base_url: $UI_BASE_URL
 
+test_credentials:
+  email: "${TEST_USER_EMAIL:-}"
+  password: "${TEST_USER_PASSWORD:-}"
+
+env_setup:
+  setup_script: e2e/support/env-setup.sh
+  teardown_script: e2e/support/env-teardown.sh
+  setup_command: "${ENV_SETUP_CMD:-}"
+  teardown_command: "${ENV_TEARDOWN_CMD:-}"
+
+features_mode: "$FEATURES_MODE"
+
 agents:
   writer:
     working_dir: $WRITER_DIR
@@ -556,35 +779,88 @@ info "Created projects/$PROJECT_KEY/config.yaml"
 {
     echo "{"
     echo "  \"project\": \"$PROJECT_NAME\","
+    echo "  \"features_mode\": \"$FEATURES_MODE\","
     echo "  \"tasks\": ["
-    TASK_NUM=0
-    LAST_IDX=$(( ${#UI_PAGES[@]} - 1 ))
-    for page_path in "${UI_PAGES[@]}"; do
-        TASK_NUM=$((TASK_NUM + 1))
-        # Derive a clean title from the path
-        PAGE_LABEL="${page_path#/}"
-        PAGE_LABEL="${PAGE_LABEL:-home}"
-        COMMA=","
-        if [[ $((TASK_NUM - 1)) -eq $LAST_IDX ]]; then
-            COMMA=""
-        fi
-        cat <<TASKEOF
+
+    if [[ "$FEATURES_MODE" == "existing" ]]; then
+        TASK_NUM=0
+        LAST_IDX=$(( ${#FEATURE_SOURCE_PATHS[@]} - 1 ))
+        for i in "${!FEATURE_SOURCE_PATHS[@]}"; do
+            TASK_NUM=$((TASK_NUM + 1))
+            SRC="${FEATURE_SOURCE_PATHS[$i]}"
+            FNAME="${FEATURE_NAMES[$i]}"
+            BASENAME=$(basename "$SRC")
+            SCOUNT="${FEATURE_SCENARIO_COUNTS[$i]:-0}"
+            COMMA=","
+            [[ $((TASK_NUM - 1)) -eq $LAST_IDX ]] && COMMA=""
+            cat <<TASKEOF
+    {
+      "id": "bdd-$TASK_NUM",
+      "title": "Implement step defs for $FNAME",
+      "description": "Implement Cucumber step definitions and Playwright Page Objects for existing feature file: e2e/features/$BASENAME ($SCOUNT scenarios)",
+      "feature_file": "e2e/features/$BASENAME",
+      "source_feature": "$SRC",
+      "base_url": "$UI_BASE_URL",
+      "scenario_count": $SCOUNT,
+      "status": "pending",
+      "attempts": 0,
+      "max_attempts": 5
+    }$COMMA
+TASKEOF
+        done
+    else
+        TASK_NUM=0
+        LAST_IDX=$(( ${#UI_PAGES[@]} - 1 ))
+        for i in "${!UI_PAGES[@]}"; do
+            page_path="${UI_PAGES[$i]}"
+            TASK_NUM=$((TASK_NUM + 1))
+            # Derive a clean title from the path
+            PAGE_LABEL="${page_path#/}"
+            PAGE_LABEL="${PAGE_LABEL:-home}"
+            COMMA=","
+            if [[ $((TASK_NUM - 1)) -eq $LAST_IDX ]]; then
+                COMMA=""
+            fi
+            # Build test_focus from wizard input or PRD
+            TASK_FOCUS="${UI_FOCUS[$i]:-}"
+            # Build acceptance_criteria JSON array
+            TASK_CRITERIA="[]"
+            if [[ -n "${UI_CRITERIA[$i]:-}" ]]; then
+                TASK_CRITERIA="${UI_CRITERIA[$i]}"
+            fi
+            cat <<TASKEOF
     {
       "id": "bdd-$TASK_NUM",
       "title": "E2E tests for $page_path",
       "description": "Write BDD feature files and step definitions for the $page_path page at $UI_BASE_URL$page_path",
       "page_url": "$page_path",
       "base_url": "$UI_BASE_URL",
+      "test_focus": "$TASK_FOCUS",
+      "test_data": "${UI_TEST_DATA[$i]:-}",
+      "acceptance_criteria": $TASK_CRITERIA,
       "status": "pending",
       "attempts": 0,
       "max_attempts": 5
     }$COMMA
 TASKEOF
-    done
+        done
+    fi
+
     echo "  ]"
     echo "}"
 } > "$PROJECT_DIR/tasks.json"
-info "Created projects/$PROJECT_KEY/tasks.json (${#UI_PAGES[@]} BDD tasks)"
+
+if [[ "$FEATURES_MODE" == "existing" ]]; then
+    info "Created projects/$PROJECT_KEY/tasks.json (${#FEATURE_SOURCE_PATHS[@]} BDD tasks, existing features)"
+else
+    info "Created projects/$PROJECT_KEY/tasks.json (${#UI_PAGES[@]} BDD tasks)"
+fi
+
+# --- Copy PRD if imported ---
+if [[ -n "${PRD_PATH:-}" && -f "${PRD_PATH:-}" ]]; then
+    cp "$PRD_PATH" "$PROJECT_DIR/prd.md"
+    info "Copied PRD to projects/$PROJECT_KEY/prd.md"
+fi
 
 # --- MCP protocol snippets ---
 
@@ -614,16 +890,19 @@ You have these tools from the `agent-bridge` MCP server:
 
 ### Workflow
 1. Receive a task via `check_messages` (role: `"writer"`)
-2. Create .feature files in `e2e/features/`
-3. Create step definitions in `e2e/steps/`
-4. Create or update Page Objects in `e2e/pages/`
-5. Validate syntax: `npx cucumber-js --dry-run`
-6. **Commit your work**: `git add . && git commit -m "feat: add e2e tests for <page>"`
-7. Call `send_to_executor` with summary and files changed
-8. Wait -- periodically call `check_messages` with role `"writer"` to get feedback
+2. Inspect the target page: `npx ts-node e2e/support/inspect.ts <staging_url><page_path>`
+3. Review the output to identify forms, buttons, data-testid attributes, and key elements
+4. Create .feature files in `e2e/features/`
+5. Create step definitions in `e2e/steps/`
+6. Create or update Page Objects in `e2e/pages/`
+7. Validate syntax: `npx cucumber-js --dry-run`
+8. **Commit your work**: `git add . && git commit -m "feat: add e2e tests for <page>"`
+9. Call `send_to_executor` with summary and files changed
+10. Wait -- periodically call `check_messages` with role `"writer"` to get feedback
 
 ### Rules
 - ALWAYS commit your code BEFORE calling send_to_executor
+- Read e2e/support/test-data.yaml for test credentials and form values
 - Use data-testid selectors in Page Objects when available
 - Write clear, business-readable Gherkin scenarios
 - Include @smoke or @regression tags as appropriate
@@ -659,11 +938,17 @@ You have these tools from the `agent-bridge` MCP server:
 ### Workflow
 1. Receive a run request via `check_messages` (role: `"executor"`)
 2. Feature files and step definitions are already in your worktree (merged by orchestrator)
-3. Run: `npx cucumber-js --format progress --format json:reports/results.json`
-4. Analyze results and capture any failure screenshots
-5. Call `send_executor_results` with status, summary, and failure details
+3. Run environment setup if specified: `bash e2e/support/env-setup.sh`
+4. Run: `npx cucumber-js --format progress --format json:reports/results.json`
+5. Run environment teardown if specified: `bash e2e/support/env-teardown.sh`
+6. Analyze results and capture any failure screenshots
+7. Call `send_executor_results` with status, summary, and failure details
 
 ### Rules
+- If e2e/support/env-setup.sh exists, ALWAYS run it before tests
+- If setup script fails, report failure (do not run tests)
+- Run teardown after tests regardless of pass/fail
+- Read e2e/support/test-data.yaml for auth credentials if tests need login
 - Do NOT modify feature files, step definitions, or Page Objects
 - Always verify staging URL is reachable before running tests
 - Capture screenshots on failure
@@ -672,7 +957,12 @@ You have these tools from the `agent-bridge` MCP server:
 EXECMCP
 
 # Extract role prompts from BDD prompt file
-WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent/CLAUDE.md")
+# Select Writer prompt based on features mode
+if [[ "$FEATURES_MODE" == "existing" ]]; then
+    WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent_existing/CLAUDE.md")
+else
+    WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent/CLAUDE.md")
+fi
 EXECUTOR_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "executor_agent/CLAUDE.md")
 
 # --- Writer CLAUDE.md ---

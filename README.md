@@ -56,7 +56,7 @@ The wizard (`new-project.sh`) presents two options:
 
 1. **PM Pre-Flight** -- Launches Claude Code as a PM agent to generate a PRD from a vague idea. Standalone step that exits after generating `prd.md`.
 
-2. **BDD E2E Testing** -- Interactive setup: enter staging URL and pages to test. Creates worktrees, config, tasks, Playwright+Cucumber scaffolding, and agent CLAUDE.md files.
+2. **BDD E2E Testing** -- Launches an agentic setup wizard that guides you through staging URL, pages, test credentials, and environment setup via conversation. Creates worktrees, config, tasks, Playwright+Cucumber scaffolding, and agent CLAUDE.md files.
 
 ## Prerequisites
 
@@ -103,6 +103,18 @@ repo_dir: ~/Repositories/my-app
 ui:
   base_url: https://staging.example.com
 
+test_credentials:
+  email: test@example.com
+  password: ""
+
+env_setup:
+  setup_script: e2e/support/env-setup.sh
+  teardown_script: e2e/support/env-teardown.sh
+  setup_command: ""
+  teardown_command: ""
+
+features_mode: "new"  # "new" (write features from scratch) or "existing" (reuse .feature files)
+
 agents:
   writer:
     working_dir: ~/Repositories/my-app/.worktrees/writer
@@ -114,9 +126,11 @@ agents:
 
 ### Tasks (`projects/<name>/tasks.json`)
 
+New mode (write features from scratch):
 ```json
 {
   "project": "my_app",
+  "features_mode": "new",
   "tasks": [
     {
       "id": "bdd-1",
@@ -124,6 +138,31 @@ agents:
       "description": "Write BDD feature files for the /login page",
       "page_url": "/login",
       "base_url": "https://staging.example.com",
+      "test_focus": "Login form, OAuth, error messages",
+      "test_data": "email: test@example.com",
+      "acceptance_criteria": ["User can log in with valid credentials"],
+      "status": "pending",
+      "attempts": 0,
+      "max_attempts": 5
+    }
+  ]
+}
+```
+
+Existing mode (reuse `.feature` files from the repo):
+```json
+{
+  "project": "my_app",
+  "features_mode": "existing",
+  "tasks": [
+    {
+      "id": "bdd-1",
+      "title": "Implement step defs for Login Flow",
+      "description": "Implement Cucumber step definitions and Playwright Page Objects for existing feature file: e2e/features/login.feature (8 scenarios)",
+      "feature_file": "e2e/features/login.feature",
+      "source_feature": "tests/features/login.feature",
+      "base_url": "https://staging.example.com",
+      "scenario_count": 8,
       "status": "pending",
       "attempts": 0,
       "max_attempts": 5
@@ -151,12 +190,16 @@ bdd-e2e-orchestrator/
 │   ├── setup.sh               # Dependency installer
 │   ├── new-project.sh         # Interactive wizard (PM Pre-Flight, BDD E2E)
 │   ├── start.sh               # Launch 3-pane tmux session
-│   └── stop.sh                # Graceful shutdown
+│   ├── stop.sh                # Graceful shutdown
+│   ├── reset.sh               # Reset project state
+│   ├── manage-test-data.sh    # View/update test credentials
+│   └── setup-iterm-profiles.sh # iTerm2 RGR profile setup
 ├── docs/
 │   ├── BDD PROMPTS.md         # Writer + Executor agent role prompts
 │   ├── CONTEXT.md             # Architecture reference
 │   ├── QUICKSTART.md          # 5-minute setup guide
 │   ├── pm_agent.md            # PM Pre-Flight prompt
+│   ├── wizard_agent.md        # BDD setup wizard agent prompt
 │   └── MCP Bridge Setup Guide.md
 ├── projects/<name>/           # Per-project config and tasks
 │   ├── config.yaml
