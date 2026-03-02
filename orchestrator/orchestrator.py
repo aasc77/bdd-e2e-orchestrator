@@ -79,6 +79,7 @@ for key, val in project_config.items():
 mailbox_dir = str(root_dir / "shared" / args.project / "mailbox")
 tasks_path = project_dir / "tasks.json"
 repo_dir = config.get("repo_dir", "")
+features_mode = config.get("features_mode", "new")
 
 # --- Setup Logging ---
 logging.basicConfig(
@@ -631,40 +632,74 @@ def assign_task_to_writer(task: dict):
     global_creds = test_data.get("global", {}).get("credentials", {})
     page_test_data = test_data.get("pages", {}).get(page_url, {})
 
-    instructions = (
-        f"Write BDD feature files and step definitions for the {page_url} page. "
-        f"The staging URL is {base_url}{page_url}. "
-        f"FIRST: Inspect the page structure by running: npx ts-node e2e/support/inspect.ts {base_url}{page_url} "
-        "to discover available selectors and elements. "
-    )
-    if test_focus:
-        instructions += f"Focus on testing: {test_focus}. "
-    if acceptance_criteria:
-        instructions += "Acceptance criteria:\n" + "\n".join(f"- {ac}" for ac in acceptance_criteria) + "\n"
-    if global_creds.get("email"):
-        instructions += (
-            f"Test credentials are available in e2e/support/test-data.yaml "
-            f"(email: {global_creds['email']}). Use them for auth steps. "
+    if features_mode == "existing":
+        feature_file = task.get("feature_file", "")
+        instructions = (
+            f"Implement Cucumber step definitions and Playwright Page Objects for the existing "
+            f"feature file: {feature_file}. "
+            f"The staging URL is {base_url}. "
+            f"FIRST: Read the feature file to understand all scenarios and steps. "
+            f"SECOND: Inspect the page structure by running: npx ts-node e2e/support/inspect.ts {base_url} "
+            "to discover available selectors and elements. "
+            "If YAML page object references exist in e2e/pages/yaml-refs/, read them for selector hints. "
         )
-    instructions += (
-        "Create: (1) a .feature file in e2e/features/, (2) step definitions in e2e/steps/, "
-        "(3) any needed Page Objects in e2e/pages/. "
-        "Validate syntax with: npx cucumber-js --dry-run. "
-        "When ready, commit with: git add . && git commit -m 'feat: add e2e tests for <page>' "
-        "then use the send_to_executor MCP tool to hand off."
-    )
+        if global_creds.get("email"):
+            instructions += (
+                f"Test credentials are in e2e/support/test-data.yaml "
+                f"(email: {global_creds['email']}). Use them for auth steps. "
+            )
+        instructions += (
+            "Create: (1) step definitions in e2e/steps/ matching every step in the feature file, "
+            "(2) Page Objects in e2e/pages/ using Playwright selectors. "
+            "Do NOT modify the existing .feature file. "
+            "Validate syntax with: npx cucumber-js --dry-run. "
+            "When ready, commit and use send_to_executor to hand off."
+        )
 
-    content = {
-        "task_id": task["id"],
-        "title": task["title"],
-        "description": task["description"],
-        "page_url": page_url,
-        "base_url": base_url,
-        "test_focus": test_focus,
-        "acceptance_criteria": acceptance_criteria,
-        "test_data": {"credentials": global_creds, "page_data": page_test_data},
-        "instructions": instructions,
-    }
+        content = {
+            "task_id": task["id"],
+            "title": task["title"],
+            "description": task["description"],
+            "feature_file": feature_file,
+            "base_url": base_url,
+            "test_data": {"credentials": global_creds},
+            "instructions": instructions,
+        }
+    else:
+        instructions = (
+            f"Write BDD feature files and step definitions for the {page_url} page. "
+            f"The staging URL is {base_url}{page_url}. "
+            f"FIRST: Inspect the page structure by running: npx ts-node e2e/support/inspect.ts {base_url}{page_url} "
+            "to discover available selectors and elements. "
+        )
+        if test_focus:
+            instructions += f"Focus on testing: {test_focus}. "
+        if acceptance_criteria:
+            instructions += "Acceptance criteria:\n" + "\n".join(f"- {ac}" for ac in acceptance_criteria) + "\n"
+        if global_creds.get("email"):
+            instructions += (
+                f"Test credentials are available in e2e/support/test-data.yaml "
+                f"(email: {global_creds['email']}). Use them for auth steps. "
+            )
+        instructions += (
+            "Create: (1) a .feature file in e2e/features/, (2) step definitions in e2e/steps/, "
+            "(3) any needed Page Objects in e2e/pages/. "
+            "Validate syntax with: npx cucumber-js --dry-run. "
+            "When ready, commit with: git add . && git commit -m 'feat: add e2e tests for <page>' "
+            "then use the send_to_executor MCP tool to hand off."
+        )
+
+        content = {
+            "task_id": task["id"],
+            "title": task["title"],
+            "description": task["description"],
+            "page_url": page_url,
+            "base_url": base_url,
+            "test_focus": test_focus,
+            "acceptance_criteria": acceptance_criteria,
+            "test_data": {"credentials": global_creds, "page_data": page_test_data},
+            "instructions": instructions,
+        }
 
     write_to_mailbox("writer", "task_assignment", content)
     tmux_nudge("writer")
@@ -804,17 +839,28 @@ def handle_executor_message(message: dict):
             print(f"   Failed {task['attempts']} times. Check orchestrator.log.\n")
             log_to_report(f"**TASK STUCK: {task['id']}** -- exceeded max attempts ({task['attempts']})\n")
         else:
-            write_to_mailbox("writer", "fix_required", {
-                "task_id": task["id"],
-                "message": "Tests failed. Fix the feature files, step definitions, or Page Objects and re-send.",
-                "failures": content.get("failures", []),
-                "scenarios_failed": content.get("scenarios_failed", 0),
-                "summary": content.get("summary", ""),
-                "instructions": (
+            if features_mode == "existing":
+                fix_instructions = (
+                    "The Executor reported test failures. Review the failure details, "
+                    "fix the step definitions or Page Objects (do NOT modify the .feature file), "
+                    "then commit and use send_to_executor to hand off again."
+                )
+                fix_message = "Tests failed. Fix the step definitions or Page Objects and re-send."
+            else:
+                fix_instructions = (
                     "The Executor reported test failures. Review the failure details, "
                     "fix the issues in feature files, step definitions, or Page Objects, "
                     "then commit and use send_to_executor to hand off again."
-                ),
+                )
+                fix_message = "Tests failed. Fix the feature files, step definitions, or Page Objects and re-send."
+
+            write_to_mailbox("writer", "fix_required", {
+                "task_id": task["id"],
+                "message": fix_message,
+                "failures": content.get("failures", []),
+                "scenarios_failed": content.get("scenarios_failed", 0),
+                "summary": content.get("summary", ""),
+                "instructions": fix_instructions,
             })
             tmux_nudge("writer")
             bdd_state = BddState.WAITING_WRITER

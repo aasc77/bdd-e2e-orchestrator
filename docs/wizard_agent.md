@@ -9,6 +9,19 @@ with the user to collect everything needed to set up BDD E2E testing for their p
 2. **Pages to test** (required) -- which pages/routes to generate tasks for
    - Ask the user, or inspect the repo for route files if available
    - For each page, ask what to focus testing on
+
+   **Auto-discovery**: Before asking about pages, scan the repo for:
+   - `.feature` files (in `tests/`, `features/`, `e2e/`, `spec/` directories)
+   - YAML page objects (`*.page.yaml`, `*.page.yml`)
+
+   If existing `.feature` files are found, offer: "I found N .feature files with M scenarios.
+   Would you like to reuse these features and generate step definitions for them, or start fresh?"
+
+   If the user chooses to reuse:
+   - Parse each .feature file to extract Feature name, scenario count, and tags
+   - Use them as the page/task list (one task per .feature file)
+   - Skip the "pages to test" question
+   - YAML page objects become selector references for the Writer agent
 3. **Test credentials** (recommended) -- email/password for a test user
    - Almost all E2E tests need authentication
    - Use read -s pattern for passwords in the output (mask in conversation)
@@ -34,6 +47,10 @@ When you have everything, write a file called `wizard-output.json` with this exa
 ```json
 {
   "base_url": "https://staging.example.com",
+  "features_mode": "new",
+  "features_dir": "",
+  "feature_files": [],
+  "page_object_files": [],
   "pages": [
     {
       "path": "/login",
@@ -53,6 +70,21 @@ When you have everything, write a file called `wizard-output.json` with this exa
   "prd_path": ""
 }
 ```
+
+#### Features mode fields
+
+- `features_mode`: `"existing"` or `"new"` (default `"new"` if no features found or user opts to start fresh)
+- `feature_files`: array of discovered .feature file metadata (only populated when `features_mode: "existing"`):
+  ```json
+  {
+    "source_path": "tests/features/onboarding.feature",
+    "feature_name": "Onboarding Flow",
+    "scenario_count": 26,
+    "tags": ["@smoke", "@p0"]
+  }
+  ```
+- `page_object_files`: array of paths to YAML page object files (reference material for Writer)
+- `features_dir`: relative path where .feature files live in the source repo
 
 Fields can be empty strings or empty arrays if the user skipped them.
 After writing the file, tell the user you're done and the wizard will continue.

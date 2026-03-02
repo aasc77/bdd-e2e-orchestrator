@@ -301,7 +301,29 @@ ENV_TEARDOWN_CMD=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT'));
 # Parse PRD path
 PRD_PATH=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('prd_path',''))")
 
-if [[ ${#UI_PAGES[@]} -eq 0 ]]; then
+# Parse features mode
+FEATURES_MODE=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('features_mode','new'))")
+FEATURES_DIR=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('features_dir',''))")
+
+# Parse feature files array
+FEATURE_FILE_COUNT=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(len(d.get('feature_files',[])))")
+FEATURE_SOURCE_PATHS=()
+FEATURE_NAMES=()
+FEATURE_SCENARIO_COUNTS=()
+for (( idx=0; idx<FEATURE_FILE_COUNT; idx++ )); do
+    FEATURE_SOURCE_PATHS+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['feature_files'][$idx]['source_path'])")")
+    FEATURE_NAMES+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['feature_files'][$idx]['feature_name'])")")
+    FEATURE_SCENARIO_COUNTS+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['feature_files'][$idx].get('scenario_count',0))")")
+done
+
+# Parse page object files
+PO_FILE_COUNT=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(len(d.get('page_object_files',[])))")
+PO_FILES=()
+for (( idx=0; idx<PO_FILE_COUNT; idx++ )); do
+    PO_FILES+=("$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d['page_object_files'][$idx])")")
+done
+
+if [[ "$FEATURES_MODE" != "existing" ]] && [[ ${#UI_PAGES[@]} -eq 0 ]]; then
     warn "No pages in wizard output. Adding default / page."
     UI_PAGES=("/")
     UI_FOCUS=("")
@@ -310,10 +332,17 @@ if [[ ${#UI_PAGES[@]} -eq 0 ]]; then
 fi
 
 info "Base URL: $UI_BASE_URL"
-info "Pages: ${UI_PAGES[*]}"
+info "Features mode: $FEATURES_MODE"
+if [[ "$FEATURES_MODE" == "existing" ]]; then
+    info "Found ${#FEATURE_SOURCE_PATHS[@]} existing .feature file(s)"
+    info "Found ${#PO_FILES[@]} YAML page object file(s)"
+    info "Will create ${#FEATURE_SOURCE_PATHS[@]} BDD task(s)"
+else
+    info "Pages: ${UI_PAGES[*]}"
+    info "Will create ${#UI_PAGES[@]} BDD task(s)"
+fi
 info "Credentials: ${TEST_USER_EMAIL:-(none)}"
 info "Env setup: ${ENV_SETUP_CMD:-(none)}"
-info "Will create ${#UI_PAGES[@]} BDD task(s)"
 
 # ─── Phase 3: Initialize git repo ────────────────────────────────────────────
 if [[ -d "$REPO_DIR/.git" ]]; then
@@ -630,6 +659,36 @@ if [[ -n "$(git -C "$REPO_DIR" status --porcelain e2e/support/ 2>/dev/null)" ]];
     git -C "$REPO_DIR" commit --quiet -m "chore: add test data and env setup files" 2>/dev/null || true
 fi
 
+# ─── Phase 4d: Copy existing features + page objects ─────────────────────────
+if [[ "$FEATURES_MODE" == "existing" ]]; then
+    mkdir -p "$REPO_DIR/e2e/features"
+    mkdir -p "$REPO_DIR/e2e/pages/yaml-refs"
+
+    for src in "${FEATURE_SOURCE_PATHS[@]}"; do
+        if [[ -f "$REPO_DIR/$src" ]]; then
+            cp "$REPO_DIR/$src" "$REPO_DIR/e2e/features/"
+            info "Copied $src -> e2e/features/"
+        else
+            warn "Feature file not found: $src"
+        fi
+    done
+
+    for po in "${PO_FILES[@]}"; do
+        if [[ -f "$REPO_DIR/$po" ]]; then
+            cp "$REPO_DIR/$po" "$REPO_DIR/e2e/pages/yaml-refs/"
+            info "Copied $po -> e2e/pages/yaml-refs/"
+        else
+            warn "Page object file not found: $po"
+        fi
+    done
+
+    # Commit copied files
+    if [[ -n "$(git -C "$REPO_DIR" status --porcelain e2e/ 2>/dev/null)" ]]; then
+        git -C "$REPO_DIR" add e2e/features/ e2e/pages/yaml-refs/ 2>/dev/null || true
+        git -C "$REPO_DIR" commit --quiet -m "chore: copy existing feature files and page objects to e2e/" 2>/dev/null || true
+    fi
+fi
+
 # ─── Phase 5: Confirmation summary ───────────────────────────────────────────
 PROJECT_DIR="$ROOT_DIR/projects/$PROJECT_KEY"
 SHARED_DIR="$ROOT_DIR/shared/$PROJECT_KEY"
@@ -704,6 +763,8 @@ env_setup:
   setup_command: "${ENV_SETUP_CMD:-}"
   teardown_command: "${ENV_TEARDOWN_CMD:-}"
 
+features_mode: "$FEATURES_MODE"
+
 agents:
   writer:
     working_dir: $WRITER_DIR
@@ -718,27 +779,56 @@ info "Created projects/$PROJECT_KEY/config.yaml"
 {
     echo "{"
     echo "  \"project\": \"$PROJECT_NAME\","
+    echo "  \"features_mode\": \"$FEATURES_MODE\","
     echo "  \"tasks\": ["
-    TASK_NUM=0
-    LAST_IDX=$(( ${#UI_PAGES[@]} - 1 ))
-    for i in "${!UI_PAGES[@]}"; do
-        page_path="${UI_PAGES[$i]}"
-        TASK_NUM=$((TASK_NUM + 1))
-        # Derive a clean title from the path
-        PAGE_LABEL="${page_path#/}"
-        PAGE_LABEL="${PAGE_LABEL:-home}"
-        COMMA=","
-        if [[ $((TASK_NUM - 1)) -eq $LAST_IDX ]]; then
-            COMMA=""
-        fi
-        # Build test_focus from wizard input or PRD
-        TASK_FOCUS="${UI_FOCUS[$i]:-}"
-        # Build acceptance_criteria JSON array
-        TASK_CRITERIA="[]"
-        if [[ -n "${UI_CRITERIA[$i]:-}" ]]; then
-            TASK_CRITERIA="${UI_CRITERIA[$i]}"
-        fi
-        cat <<TASKEOF
+
+    if [[ "$FEATURES_MODE" == "existing" ]]; then
+        TASK_NUM=0
+        LAST_IDX=$(( ${#FEATURE_SOURCE_PATHS[@]} - 1 ))
+        for i in "${!FEATURE_SOURCE_PATHS[@]}"; do
+            TASK_NUM=$((TASK_NUM + 1))
+            SRC="${FEATURE_SOURCE_PATHS[$i]}"
+            FNAME="${FEATURE_NAMES[$i]}"
+            BASENAME=$(basename "$SRC")
+            SCOUNT="${FEATURE_SCENARIO_COUNTS[$i]:-0}"
+            COMMA=","
+            [[ $((TASK_NUM - 1)) -eq $LAST_IDX ]] && COMMA=""
+            cat <<TASKEOF
+    {
+      "id": "bdd-$TASK_NUM",
+      "title": "Implement step defs for $FNAME",
+      "description": "Implement Cucumber step definitions and Playwright Page Objects for existing feature file: e2e/features/$BASENAME ($SCOUNT scenarios)",
+      "feature_file": "e2e/features/$BASENAME",
+      "source_feature": "$SRC",
+      "base_url": "$UI_BASE_URL",
+      "scenario_count": $SCOUNT,
+      "status": "pending",
+      "attempts": 0,
+      "max_attempts": 5
+    }$COMMA
+TASKEOF
+        done
+    else
+        TASK_NUM=0
+        LAST_IDX=$(( ${#UI_PAGES[@]} - 1 ))
+        for i in "${!UI_PAGES[@]}"; do
+            page_path="${UI_PAGES[$i]}"
+            TASK_NUM=$((TASK_NUM + 1))
+            # Derive a clean title from the path
+            PAGE_LABEL="${page_path#/}"
+            PAGE_LABEL="${PAGE_LABEL:-home}"
+            COMMA=","
+            if [[ $((TASK_NUM - 1)) -eq $LAST_IDX ]]; then
+                COMMA=""
+            fi
+            # Build test_focus from wizard input or PRD
+            TASK_FOCUS="${UI_FOCUS[$i]:-}"
+            # Build acceptance_criteria JSON array
+            TASK_CRITERIA="[]"
+            if [[ -n "${UI_CRITERIA[$i]:-}" ]]; then
+                TASK_CRITERIA="${UI_CRITERIA[$i]}"
+            fi
+            cat <<TASKEOF
     {
       "id": "bdd-$TASK_NUM",
       "title": "E2E tests for $page_path",
@@ -753,11 +843,18 @@ info "Created projects/$PROJECT_KEY/config.yaml"
       "max_attempts": 5
     }$COMMA
 TASKEOF
-    done
+        done
+    fi
+
     echo "  ]"
     echo "}"
 } > "$PROJECT_DIR/tasks.json"
-info "Created projects/$PROJECT_KEY/tasks.json (${#UI_PAGES[@]} BDD tasks)"
+
+if [[ "$FEATURES_MODE" == "existing" ]]; then
+    info "Created projects/$PROJECT_KEY/tasks.json (${#FEATURE_SOURCE_PATHS[@]} BDD tasks, existing features)"
+else
+    info "Created projects/$PROJECT_KEY/tasks.json (${#UI_PAGES[@]} BDD tasks)"
+fi
 
 # --- Copy PRD if imported ---
 if [[ -n "${PRD_PATH:-}" && -f "${PRD_PATH:-}" ]]; then
@@ -860,7 +957,12 @@ You have these tools from the `agent-bridge` MCP server:
 EXECMCP
 
 # Extract role prompts from BDD prompt file
-WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent/CLAUDE.md")
+# Select Writer prompt based on features mode
+if [[ "$FEATURES_MODE" == "existing" ]]; then
+    WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent_existing/CLAUDE.md")
+else
+    WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent/CLAUDE.md")
+fi
 EXECUTOR_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "executor_agent/CLAUDE.md")
 
 # --- Writer CLAUDE.md ---
