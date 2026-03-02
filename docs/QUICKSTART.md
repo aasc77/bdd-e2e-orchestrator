@@ -34,7 +34,8 @@ The wizard asks you to pick a mode:
 
 For mode 2, an agentic wizard launches and guides you through:
 - **Staging URL** -- the base URL to test against
-- **Pages** -- which routes to test (can auto-discover from repo)
+- **Existing features** -- auto-discovers `.feature` files and YAML page objects in the repo; offers to reuse them (generates "implement step defs" tasks) or start fresh
+- **Pages** -- which routes to test (can auto-discover from repo; skipped if reusing existing features)
 - **Test credentials** -- email/password for auth (stored in `e2e/support/test-data.yaml`)
 - **Environment setup/teardown** -- commands to run before/after tests
 - **PRD import** -- optionally read a PRD to extract pages and acceptance criteria

@@ -113,6 +113,8 @@ env_setup:
   setup_command: ""
   teardown_command: ""
 
+features_mode: "new"  # "new" (write features from scratch) or "existing" (reuse .feature files)
+
 agents:
   writer:
     working_dir: ~/Repositories/my-app/.worktrees/writer
@@ -124,9 +126,11 @@ agents:
 
 ### Tasks (`projects/<name>/tasks.json`)
 
+New mode (write features from scratch):
 ```json
 {
   "project": "my_app",
+  "features_mode": "new",
   "tasks": [
     {
       "id": "bdd-1",
@@ -137,6 +141,28 @@ agents:
       "test_focus": "Login form, OAuth, error messages",
       "test_data": "email: test@example.com",
       "acceptance_criteria": ["User can log in with valid credentials"],
+      "status": "pending",
+      "attempts": 0,
+      "max_attempts": 5
+    }
+  ]
+}
+```
+
+Existing mode (reuse `.feature` files from the repo):
+```json
+{
+  "project": "my_app",
+  "features_mode": "existing",
+  "tasks": [
+    {
+      "id": "bdd-1",
+      "title": "Implement step defs for Login Flow",
+      "description": "Implement Cucumber step definitions and Playwright Page Objects for existing feature file: e2e/features/login.feature (8 scenarios)",
+      "feature_file": "e2e/features/login.feature",
+      "source_feature": "tests/features/login.feature",
+      "base_url": "https://staging.example.com",
+      "scenario_count": 8,
       "status": "pending",
       "attempts": 0,
       "max_attempts": 5

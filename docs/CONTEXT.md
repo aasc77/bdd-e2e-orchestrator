@@ -35,6 +35,7 @@ Each project uses a single repo with two worktrees:
 │   ├── features/                   # .feature files (Gherkin)
 │   ├── steps/                      # Step definitions (TypeScript)
 │   ├── pages/                      # Page Object Models
+│   │   └── yaml-refs/              # YAML page objects from source repo (existing mode)
 │   └── support/                    # World class, hooks, test-data.yaml, env scripts
 ```
 
@@ -96,6 +97,8 @@ env_setup:
   teardown_script: e2e/support/env-teardown.sh
   setup_command: ""
   teardown_command: ""
+
+features_mode: "new"  # "new" (write features from scratch) or "existing" (reuse .feature files)
 
 agents:
   writer:
