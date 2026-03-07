@@ -290,10 +290,12 @@ if [ -f "$COMPOSITE_IMG" ]; then
     echo "  Transparent pane backgrounds (composite image will show through)"
     USE_COMPOSITE=true
 else
-    tmux select-pane -t "$SESSION:qa.0" -P 'bg=colour233'     # writer: near-black
-    tmux select-pane -t "$SESSION:qa.1" -P 'bg=colour233'     # executor: near-black
-    tmux select-pane -t "$SESSION:qa.2" -P 'bg=colour233'    # orch: near-black
-    echo "  Solid color pane backgrounds"
+    tmux select-pane -t "$SESSION:qa.0" -P 'bg=default'
+    tmux select-pane -t "$SESSION:qa.1" -P 'bg=default'
+    tmux select-pane -t "$SESSION:qa.2" -P 'bg=default'
+    tmux set-option -t "$SESSION" window-style 'bg=default'
+    tmux set-option -t "$SESSION" window-active-style 'bg=default'
+    echo "  Transparent pane backgrounds"
     USE_COMPOSITE=false
 fi
 
