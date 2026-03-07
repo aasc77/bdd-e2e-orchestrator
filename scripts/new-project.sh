@@ -768,10 +768,10 @@ $(if [[ "$TESTING_SURFACE" == "python" ]]; then echo "test_command: \"$TEST_COMM
 agents:
   writer:
     working_dir: $WRITER_DIR
-    pane: qa.0
+    pane: writer.0
   executor:
     working_dir: $EXECUTOR_DIR
-    pane: qa.1
+    pane: writer.1
 EOF
 info "Created projects/$PROJECT_KEY/config.yaml"
 

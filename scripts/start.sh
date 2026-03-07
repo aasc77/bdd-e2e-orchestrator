@@ -224,65 +224,56 @@ rm -f "$MAILBOX_DIR/to_writer/"*.json 2>/dev/null || true
 rm -f "$MAILBOX_DIR/to_executor/"*.json 2>/dev/null || true
 echo "  Mailboxes cleared ($MAILBOX_DIR)"
 
-# --- Create tmux session with 3-pane layout ---
+# --- Create tmux session ---
 echo ""
 echo "Creating tmux session '$SESSION'..."
 
-# Layout:
+# Layout (after tiled):
 # +--------------------+--------------------+
 # |  WRITER (pane 0)   | EXECUTOR (pane 1)  |
 # +--------------------+--------------------+
-# |        ORCHESTRATOR (pane 2)             |
-# +------------------------------------------+
+# |   (empty, pane 2)  |    ORCH (pane 3)   |
+# +--------------------+--------------------+
 
-# Create session with 3 panes using main-horizontal layout:
-#   Pane 0 (top-left): Writer
-#   Pane 1 (top-right): Executor
-#   Pane 2 (bottom full-width): Orchestrator
-tmux new-session -d -s "$SESSION" -n "qa" -c "$WRITER_DIR"
-tmux split-window -h -t "$SESSION:qa" -c "$EXECUTOR_DIR"
-tmux split-window -v -t "$SESSION:qa.0" -c "$PROJECT_DIR/orchestrator"
-tmux select-layout -t "$SESSION:qa" main-horizontal
+# Create separate windows first (deterministic pane order with join-pane)
+tmux new-session -d -s "$SESSION" -n "writer" -c "$WRITER_DIR"
+echo "  Window 'writer' created"
 
-# After layout, verify pane directories and identify which pane is which
-# main-horizontal can reorder panes, so find them by their working directory
-WRITER_PANE=""
-EXECUTOR_PANE=""
-ORCH_PANE=""
-while IFS= read -r line; do
-    idx="${line%%:*}"
-    dir="${line#*:}"
-    case "$dir" in
-        "$WRITER_DIR") WRITER_PANE="$idx" ;;
-        "$EXECUTOR_DIR") EXECUTOR_PANE="$idx" ;;
-        "$PROJECT_DIR/orchestrator") ORCH_PANE="$idx" ;;
-    esac
-done < <(tmux list-panes -t "$SESSION:qa" -F "#{pane_index}:#{pane_current_path}")
+tmux new-window -t "$SESSION" -n "executor" -c "$EXECUTOR_DIR"
+echo "  Window 'executor' created"
 
-# Fallback if detection fails
-WRITER_PANE="${WRITER_PANE:-0}"
-EXECUTOR_PANE="${EXECUTOR_PANE:-1}"
-ORCH_PANE="${ORCH_PANE:-2}"
+tmux new-window -t "$SESSION" -n "orch" -c "$PROJECT_DIR/orchestrator"
+echo "  Window 'orch' created"
 
-echo "  Writer pane: $WRITER_PANE ($WRITER_DIR)"
-echo "  Executor pane: $EXECUTOR_PANE ($EXECUTOR_DIR)"
-echo "  Orchestrator pane: $ORCH_PANE ($PROJECT_DIR/orchestrator)"
-
-# --- Launch processes ---
+# --- Launch processes in their own windows before joining ---
 echo ""
 echo "Launching agents..."
 
 # Start Writer agent
-tmux send-keys -t "$SESSION:qa.$WRITER_PANE" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$WRITER_PROMPT\" $YOLO_FLAG" Enter
+tmux send-keys -t "$SESSION:writer" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$WRITER_PROMPT\" $YOLO_FLAG" Enter
 echo "  Writer agent started"
 
 # Start Executor agent
-tmux send-keys -t "$SESSION:qa.$EXECUTOR_PANE" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$EXECUTOR_PROMPT\" $YOLO_FLAG" Enter
+tmux send-keys -t "$SESSION:executor" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$EXECUTOR_PROMPT\" $YOLO_FLAG" Enter
 echo "  Executor agent started"
 
-# Start orchestrator with project argument
-tmux send-keys -t "$SESSION:qa.$ORCH_PANE" "python3 orchestrator.py $PROJECT" Enter
+# Start orchestrator
+tmux send-keys -t "$SESSION:orch" "python3 orchestrator.py $PROJECT" Enter
 echo "  Orchestrator started (project: $PROJECT)"
+
+# --- Merge into single window with 2x2 tiled layout ---
+echo ""
+echo "Merging into 2x2 layout..."
+tmux join-pane -s "$SESSION:executor" -t "$SESSION:writer"
+tmux join-pane -s "$SESSION:orch" -t "$SESSION:writer"
+tmux select-layout -t "$SESSION:writer" tiled
+
+# Pane indices after tiled: 0=writer(top-left), 1=executor(top-right), 2=orch(bottom-right)
+# With 3 panes, tiled gives: top-left(0), top-right(1), bottom(2)
+# We want orch bottom-right, so this works.
+WRITER_PANE=0
+EXECUTOR_PANE=1
+ORCH_PANE=2
 
 # --- Pane styling ---
 echo ""
@@ -293,9 +284,9 @@ tmux set-option -t "$SESSION" pane-border-status top
 tmux set-option -t "$SESSION" pane-border-format " #{?pane_active,#[bold],#[dim]}#{pane_title} "
 
 # Set pane titles
-tmux select-pane -t "$SESSION:qa.$WRITER_PANE" -T "WRITER [$PROJECT]"
-tmux select-pane -t "$SESSION:qa.$EXECUTOR_PANE" -T "EXECUTOR [$PROJECT]"
-tmux select-pane -t "$SESSION:qa.$ORCH_PANE" -T "ORCH [$PROJECT]"
+tmux select-pane -t "$SESSION:writer.$WRITER_PANE" -T "WRITER [$PROJECT]"
+tmux select-pane -t "$SESSION:writer.$EXECUTOR_PANE" -T "EXECUTOR [$PROJECT]"
+tmux select-pane -t "$SESSION:writer.$ORCH_PANE" -T "ORCH [$PROJECT]"
 
 # Check if a composite background image exists
 COMPOSITE_IMG="$HOME/.config/bdd-e2e-orchestrator/images/bdd_composite.png"
@@ -306,9 +297,9 @@ else
 fi
 
 # Always use transparent backgrounds
-tmux select-pane -t "$SESSION:qa.$WRITER_PANE" -P 'bg=default'
-tmux select-pane -t "$SESSION:qa.$EXECUTOR_PANE" -P 'bg=default'
-tmux select-pane -t "$SESSION:qa.$ORCH_PANE" -P 'bg=default'
+tmux select-pane -t "$SESSION:writer.$WRITER_PANE" -P 'bg=default'
+tmux select-pane -t "$SESSION:writer.$EXECUTOR_PANE" -P 'bg=default'
+tmux select-pane -t "$SESSION:writer.$ORCH_PANE" -P 'bg=default'
 tmux set-option -t "$SESSION" window-style 'bg=default'
 tmux set-option -t "$SESSION" window-active-style 'bg=default'
 echo "  Transparent pane backgrounds"
@@ -327,9 +318,9 @@ echo "Waiting for agents to initialize..."
 sleep 5
 
 # Nudge Writer to pick up first task
-tmux send-keys -t "$SESSION:qa.$WRITER_PANE" -l "You have new messages. Use the check_messages MCP tool with role 'writer' to read and act on them."
+tmux send-keys -t "$SESSION:writer.$WRITER_PANE" -l "You have new messages. Use the check_messages MCP tool with role 'writer' to read and act on them."
 sleep 0.2
-tmux send-keys -t "$SESSION:qa.$WRITER_PANE" Enter
+tmux send-keys -t "$SESSION:writer.$WRITER_PANE" Enter
 echo "  Nudged Writer to pick up first task"
 
 # --- Attach ---
@@ -356,7 +347,7 @@ echo "================================"
 echo ""
 
 # Select the orchestrator pane
-tmux select-pane -t "$SESSION:qa.$ORCH_PANE"
+tmux select-pane -t "$SESSION:writer.$ORCH_PANE"
 
 # If composite image exists, switch iTerm2 to the BDD profile before attaching
 if $USE_COMPOSITE; then
