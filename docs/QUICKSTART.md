@@ -28,11 +28,7 @@ my-bdd/scripts/new-project.sh           # interactive
 my-bdd/scripts/new-project.sh my-app    # skip folder prompt
 ```
 
-The wizard asks you to pick a mode:
-1. **PM Pre-Flight** -- generate a PRD from a vague idea (exits after, run wizard again for mode 2)
-2. **BDD E2E Testing** -- write & run Playwright+Cucumber tests against a staging URL
-
-For mode 2, an agentic wizard launches and guides you through:
+The wizard launches an agentic session that guides you through:
 - **Testing surface** -- browser (Playwright+Cucumber) or python (pytest-bdd)
 - **Staging URL** -- the base URL to test against (required for browser, optional for python)
 - **Existing features** -- auto-discovers `.feature` files and YAML page objects in the repo; offers to reuse them (generates "implement step defs" tasks) or start fresh

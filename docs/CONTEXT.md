@@ -5,7 +5,7 @@ High-level overview of how the BDD E2E orchestrator is built. Use this as a refe
 ## System Components
 
 ```
-scripts/new-project.sh            Interactive wizard (PM Pre-Flight or BDD E2E setup)
+scripts/new-project.sh            Interactive BDD setup wizard
 scripts/start.sh                  Launches 3-pane tmux session + orchestrator + 2 Claude Code agents
 scripts/stop.sh                   Sends /exit to agents, kills tmux session, cleans up branches
 orchestrator/orchestrator.py      Main event loop (polls mailbox, manages git merges)
@@ -14,13 +14,14 @@ orchestrator/mailbox_watcher.py   File watcher for JSON messages in shared/<proj
 mcp-bridge/index.js               MCP server exposing mailbox tools to Claude Code agents
 ```
 
-## Two Modes
+## Setup Wizard
 
-The wizard (`new-project.sh`) presents two options:
+The wizard (`new-project.sh`) launches an agentic session that collects testing surface, staging URL, pages, test credentials, and environment setup commands via conversation. Two testing surfaces:
 
-1. **PM Pre-Flight** -- Launches Claude Code as a PM agent to generate a PRD from a vague idea. Standalone step that exits after generating `prd.md`. Does not start the BDD pipeline. Prompt template: `docs/pm_agent.md`.
+- **`browser`** (default) -- Playwright + Cucumber (TypeScript). Writer creates `.feature` files + step defs + Page Objects, Executor runs `npx cucumber-js`.
+- **`python`** -- pytest-bdd (Python). Writer creates `.feature` files + pytest-bdd step defs, Executor runs `pytest`.
 
-2. **BDD E2E Testing (`mode: bdd`)** -- Launches an agentic setup wizard that collects staging URL, pages, test credentials, and environment setup commands via conversation. Writer creates Gherkin feature files + step definitions + Page Objects, Executor runs Playwright+Cucumber tests against the staging URL. Agent prompts loaded from `docs/BDD PROMPTS.md`, wizard prompt from `docs/wizard_agent.md`.
+Agent prompts loaded from `docs/BDD PROMPTS.md`, wizard prompt from `docs/wizard_agent.md`.
 
 ## Git Worktree Layout
 
@@ -81,6 +82,7 @@ The orchestrator polls the mailbox independently via `mailbox_watcher.py`, route
 project: my_app
 mode: bdd
 repo_dir: /path/to/your-repo
+testing_surface: "browser"  # "browser" or "python"
 
 tmux:
   session_name: my-app
