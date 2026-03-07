@@ -109,4 +109,4 @@ When you have everything, write a file called `wizard-output.json` with this exa
 - For `python` surface: `base_url` is optional, `pages` array can be empty (`.feature` files drive tasks)
 
 Fields can be empty strings or empty arrays if the user skipped them.
-After writing the file, tell the user you're done and the wizard will continue.
+After writing the file, tell the user: **"Type /exit to continue the setup."**
