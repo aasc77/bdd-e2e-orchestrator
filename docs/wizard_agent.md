@@ -5,8 +5,15 @@ with the user to collect everything needed to set up BDD E2E testing for their p
 
 ### What You Need to Collect
 
-1. **Staging URL** (required) -- the base URL to test against
-2. **Pages to test** (required) -- which pages/routes to generate tasks for
+1. **Testing surface** (required, ask first) -- what kind of project is this?
+   - `"browser"` -- web app with a UI (Playwright + Cucumber, TypeScript)
+   - `"python"` -- CLI, API, Python module, or agent testing (pytest-bdd, Python)
+   Ask early: "Is this a browser/web app, or a CLI/API/Python project?"
+   Default to `"browser"` if unclear.
+
+2. **Staging URL** (required for browser, optional for python) -- the base URL to test against
+   - For `python` surface: only needed if the project has an API to test
+3. **Pages to test** (required for browser, skip for python) -- which pages/routes to generate tasks for
    - Ask the user, or inspect the repo for route files if available
    - For each page, ask what to focus testing on
 
@@ -22,19 +29,24 @@ with the user to collect everything needed to set up BDD E2E testing for their p
    - Use them as the page/task list (one task per .feature file)
    - Skip the "pages to test" question
    - YAML page objects become selector references for the Writer agent
-3. **Test credentials** (recommended) -- email/password for a test user
+3. **Project root** (required for python surface) -- path to the project being tested
+   - Ask: "What's the project root directory?" (e.g., `~/Repositories/my-project`)
+   - Ask: "What command runs the project's tests?" (e.g., `pytest tests/ -v`)
+4. **Test credentials** (recommended) -- email/password for a test user
    - Almost all E2E tests need authentication
    - Use read -s pattern for passwords in the output (mask in conversation)
-4. **Per-page test data** (optional) -- form values, search terms, specific inputs
-5. **Environment setup command** (optional) -- command to run before tests
+5. **Per-page test data** (optional, browser only) -- form values, search terms, specific inputs
+6. **Environment setup command** (optional) -- command to run before tests
    - Examples: reset test accounts, clear DB, seed data, call an API
-6. **Environment teardown command** (optional) -- command to run after tests
-7. **PRD file** (optional) -- if the user has a PRD, read it to extract pages and acceptance criteria
+7. **Environment teardown command** (optional) -- command to run after tests
+8. **PRD file** (optional) -- if the user has a PRD, read it to extract pages and acceptance criteria
 
 ### Conversation Guidelines
 
 - Be concise. Ask one topic at a time.
-- If the repo has route files (e.g., Next.js `app/` or `pages/`, React Router, Express routes),
+- Ask about testing surface FIRST -- it determines the rest of the conversation flow.
+- For `python` surface: skip page inspection, staging URL is optional, ask for project root and test command instead.
+- For `browser` surface: if the repo has route files (e.g., Next.js `app/` or `pages/`, React Router, Express routes),
   offer to discover pages automatically.
 - Suggest reasonable defaults when possible.
 - If the user provides a PRD file path, read it and extract testable pages with acceptance criteria.
@@ -46,6 +58,7 @@ When you have everything, write a file called `wizard-output.json` with this exa
 
 ```json
 {
+  "testing_surface": "browser",
   "base_url": "https://staging.example.com",
   "features_mode": "new",
   "features_dir": "",
@@ -67,6 +80,8 @@ When you have everything, write a file called `wizard-output.json` with this exa
     "setup_command": "curl -X POST https://staging.example.com/api/test/reset",
     "teardown_command": ""
   },
+  "project_root": "",
+  "test_command": "",
   "prd_path": ""
 }
 ```
@@ -85,6 +100,13 @@ When you have everything, write a file called `wizard-output.json` with this exa
   ```
 - `page_object_files`: array of paths to YAML page object files (reference material for Writer)
 - `features_dir`: relative path where .feature files live in the source repo
+
+#### Testing surface fields
+
+- `testing_surface`: `"browser"` (default) or `"python"`
+- `project_root`: path to the project being tested (python surface only)
+- `test_command`: command to run the project's tests (python surface only, e.g. `pytest tests/ -v`)
+- For `python` surface: `base_url` is optional, `pages` array can be empty (`.feature` files drive tasks)
 
 Fields can be empty strings or empty arrays if the user skipped them.
 After writing the file, tell the user you're done and the wizard will continue.

@@ -33,14 +33,16 @@ The wizard asks you to pick a mode:
 2. **BDD E2E Testing** -- write & run Playwright+Cucumber tests against a staging URL
 
 For mode 2, an agentic wizard launches and guides you through:
-- **Staging URL** -- the base URL to test against
+- **Testing surface** -- browser (Playwright+Cucumber) or python (pytest-bdd)
+- **Staging URL** -- the base URL to test against (required for browser, optional for python)
 - **Existing features** -- auto-discovers `.feature` files and YAML page objects in the repo; offers to reuse them (generates "implement step defs" tasks) or start fresh
-- **Pages** -- which routes to test (can auto-discover from repo; skipped if reusing existing features)
-- **Test credentials** -- email/password for auth (stored in `e2e/support/test-data.yaml`)
+- **Pages** -- which routes to test (browser only; skipped if reusing existing features)
+- **Project root / test command** -- path and test runner command (python surface only)
+- **Test credentials** -- email/password for auth (browser: stored in `e2e/support/test-data.yaml`)
 - **Environment setup/teardown** -- commands to run before/after tests
 - **PRD import** -- optionally read a PRD to extract pages and acceptance criteria
 
-The wizard creates worktrees, config, tasks, Playwright+Cucumber scaffolding (`e2e/` directory, `cucumber.js`, `tsconfig.json`), test data files, and agent `CLAUDE.md` files.
+The wizard creates worktrees, config, tasks, framework scaffolding (browser: `e2e/` + Playwright+Cucumber; python: `tests/` + pytest-bdd), and agent `CLAUDE.md` files.
 
 ## 4. Customize
 

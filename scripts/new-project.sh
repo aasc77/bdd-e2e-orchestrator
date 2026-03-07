@@ -271,7 +271,7 @@ fi
 UI_BASE_URL=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('base_url',''))")
 UI_BASE_URL="${UI_BASE_URL%/}"
 
-if [[ -z "$UI_BASE_URL" ]]; then
+if [[ -z "$UI_BASE_URL" && "$TESTING_SURFACE" == "browser" ]]; then
     error "No base URL in wizard output."
     exit 1
 fi
@@ -300,6 +300,11 @@ ENV_TEARDOWN_CMD=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT'));
 
 # Parse PRD path
 PRD_PATH=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('prd_path',''))")
+
+# Parse testing surface
+TESTING_SURFACE=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('testing_surface','browser'))")
+TEST_COMMAND=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('test_command','pytest tests/ -v --tb=short'))")
+PROJECT_ROOT=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('project_root',''))")
 
 # Parse features mode
 FEATURES_MODE=$(python3 -c "import json; d=json.load(open('$WIZARD_OUTPUT')); print(d.get('features_mode','new'))")
@@ -331,7 +336,8 @@ if [[ "$FEATURES_MODE" != "existing" ]] && [[ ${#UI_PAGES[@]} -eq 0 ]]; then
     UI_TEST_DATA=("")
 fi
 
-info "Base URL: $UI_BASE_URL"
+info "Testing surface: $TESTING_SURFACE"
+info "Base URL: ${UI_BASE_URL:-(none)}"
 info "Features mode: $FEATURES_MODE"
 if [[ "$FEATURES_MODE" == "existing" ]]; then
     info "Found ${#FEATURE_SOURCE_PATHS[@]} existing .feature file(s)"
@@ -420,9 +426,73 @@ if [[ -f "$REPO_DIR/CLAUDE.md" ]]; then
     fi
 fi
 
-# ─── Phase 4b: Playwright+Cucumber bootstrap ─────────────────────────────────
+# ─── Phase 4b: Test framework bootstrap ──────────────────────────────────────
 echo ""
-if [[ ! -f "$REPO_DIR/playwright.config.ts" && ! -f "$REPO_DIR/cucumber.js" ]]; then
+if [[ "$TESTING_SURFACE" == "python" ]]; then
+    # --- Python / pytest-bdd bootstrap ---
+    if [[ ! -f "$REPO_DIR/tests/conftest.py" ]]; then
+        echo "  ${BOLD}pytest-bdd Setup${RESET}"
+        echo ""
+        read -r -p "  Initialize pytest-bdd scaffolding? [Y/n]: " SCAFFOLD_CHOICE
+        SCAFFOLD_CHOICE="${SCAFFOLD_CHOICE:-Y}"
+
+        if [[ "$SCAFFOLD_CHOICE" =~ ^[Yy]$ ]]; then
+            info "Bootstrapping pytest-bdd..."
+
+            # Create directory structure
+            mkdir -p "$REPO_DIR/tests/features"
+            mkdir -p "$REPO_DIR/tests/step_defs"
+            info "Created tests/ directory structure"
+
+            # Create conftest.py with pytest-bdd scenario discovery
+            cat > "$REPO_DIR/tests/conftest.py" <<'CONFEOF'
+"""pytest-bdd conftest -- auto-discovers .feature files and provides shared fixtures."""
+import pytest
+
+
+@pytest.fixture
+def project_root(tmp_path):
+    """Provide a temporary directory for test isolation."""
+    return tmp_path
+CONFEOF
+            info "Created tests/conftest.py"
+
+            # Create requirements.txt
+            cat > "$REPO_DIR/requirements.txt" <<'REQEOF'
+pytest>=7.0
+pytest-bdd>=7.0
+httpx>=0.27
+REQEOF
+            info "Created requirements.txt"
+
+            # Install dependencies
+            (cd "$REPO_DIR" && pip install -r requirements.txt --quiet 2>/dev/null) || true
+            info "Installed pytest, pytest-bdd, httpx"
+
+            # Add Python cache dirs to .gitignore
+            GITIGNORE_ADDITIONS=""
+            if ! grep -q '^__pycache__/' "$REPO_DIR/.gitignore" 2>/dev/null; then
+                GITIGNORE_ADDITIONS+="\n# Python\n__pycache__/\n*.pyc"
+            fi
+            if ! grep -q '^\\.pytest_cache/' "$REPO_DIR/.gitignore" 2>/dev/null; then
+                GITIGNORE_ADDITIONS+="\n.pytest_cache/"
+            fi
+            if [[ -n "$GITIGNORE_ADDITIONS" ]]; then
+                echo -e "$GITIGNORE_ADDITIONS" >> "$REPO_DIR/.gitignore"
+            fi
+
+            # Commit scaffolding
+            git -C "$REPO_DIR" add -A
+            git -C "$REPO_DIR" commit --quiet -m "chore: add pytest-bdd test scaffolding"
+            info "Committed scaffolding to git"
+        else
+            info "Skipping scaffolding -- you can set it up manually later"
+        fi
+    else
+        info "tests/conftest.py already exists -- skipping scaffolding"
+    fi
+elif [[ ! -f "$REPO_DIR/playwright.config.ts" && ! -f "$REPO_DIR/cucumber.js" ]]; then
+    # --- Browser / Playwright+Cucumber bootstrap ---
     echo "  ${BOLD}Playwright + Cucumber Setup${RESET}"
     echo ""
     read -r -p "  Initialize Playwright+Cucumber scaffolding? [Y/n]: " SCAFFOLD_CHOICE
@@ -591,7 +661,8 @@ else
     info "Playwright/Cucumber config already exists -- skipping scaffolding"
 fi
 
-# ─── Phase 4c: Test data + env scripts (always created) ─────────────────────
+# ─── Phase 4c: Test data + env scripts (browser surface only) ────────────────
+if [[ "$TESTING_SURFACE" == "browser" ]]; then
 mkdir -p "$REPO_DIR/e2e/support"
 
 # Create test-data.yaml (skip if exists)
@@ -658,34 +729,48 @@ if [[ -n "$(git -C "$REPO_DIR" status --porcelain e2e/support/ 2>/dev/null)" ]];
     git -C "$REPO_DIR" add e2e/support/test-data.yaml e2e/support/env-setup.sh e2e/support/env-teardown.sh 2>/dev/null || true
     git -C "$REPO_DIR" commit --quiet -m "chore: add test data and env setup files" 2>/dev/null || true
 fi
+fi  # end TESTING_SURFACE == browser
 
 # ─── Phase 4d: Copy existing features + page objects ─────────────────────────
 if [[ "$FEATURES_MODE" == "existing" ]]; then
-    mkdir -p "$REPO_DIR/e2e/features"
-    mkdir -p "$REPO_DIR/e2e/pages/yaml-refs"
+    if [[ "$TESTING_SURFACE" == "python" ]]; then
+        FEATURES_DEST="tests/features"
+    else
+        FEATURES_DEST="e2e/features"
+    fi
+
+    mkdir -p "$REPO_DIR/$FEATURES_DEST"
+    if [[ "$TESTING_SURFACE" == "browser" ]]; then
+        mkdir -p "$REPO_DIR/e2e/pages/yaml-refs"
+    fi
 
     for src in "${FEATURE_SOURCE_PATHS[@]}"; do
         if [[ -f "$REPO_DIR/$src" ]]; then
-            cp "$REPO_DIR/$src" "$REPO_DIR/e2e/features/"
-            info "Copied $src -> e2e/features/"
+            cp "$REPO_DIR/$src" "$REPO_DIR/$FEATURES_DEST/"
+            info "Copied $src -> $FEATURES_DEST/"
         else
             warn "Feature file not found: $src"
         fi
     done
 
-    for po in "${PO_FILES[@]}"; do
-        if [[ -f "$REPO_DIR/$po" ]]; then
-            cp "$REPO_DIR/$po" "$REPO_DIR/e2e/pages/yaml-refs/"
-            info "Copied $po -> e2e/pages/yaml-refs/"
-        else
-            warn "Page object file not found: $po"
-        fi
-    done
+    if [[ "$TESTING_SURFACE" == "browser" ]]; then
+        for po in "${PO_FILES[@]}"; do
+            if [[ -f "$REPO_DIR/$po" ]]; then
+                cp "$REPO_DIR/$po" "$REPO_DIR/e2e/pages/yaml-refs/"
+                info "Copied $po -> e2e/pages/yaml-refs/"
+            else
+                warn "Page object file not found: $po"
+            fi
+        done
+    fi
 
     # Commit copied files
-    if [[ -n "$(git -C "$REPO_DIR" status --porcelain e2e/ 2>/dev/null)" ]]; then
-        git -C "$REPO_DIR" add e2e/features/ e2e/pages/yaml-refs/ 2>/dev/null || true
-        git -C "$REPO_DIR" commit --quiet -m "chore: copy existing feature files and page objects to e2e/" 2>/dev/null || true
+    if [[ -n "$(git -C "$REPO_DIR" status --porcelain "$FEATURES_DEST" 2>/dev/null)" ]]; then
+        git -C "$REPO_DIR" add "$FEATURES_DEST/" 2>/dev/null || true
+        if [[ "$TESTING_SURFACE" == "browser" ]]; then
+            git -C "$REPO_DIR" add e2e/pages/yaml-refs/ 2>/dev/null || true
+        fi
+        git -C "$REPO_DIR" commit --quiet -m "chore: copy existing feature files to $FEATURES_DEST/" 2>/dev/null || true
     fi
 fi
 
@@ -749,9 +834,10 @@ tmux:
   session_name: $PROJECT_KEY
 
 repo_dir: $REPO_DIR
+testing_surface: "$TESTING_SURFACE"
 
 ui:
-  base_url: $UI_BASE_URL
+  base_url: "${UI_BASE_URL:-}"
 
 test_credentials:
   email: "${TEST_USER_EMAIL:-}"
@@ -764,6 +850,7 @@ env_setup:
   teardown_command: "${ENV_TEARDOWN_CMD:-}"
 
 features_mode: "$FEATURES_MODE"
+$(if [[ "$TESTING_SURFACE" == "python" ]]; then echo "test_command: \"$TEST_COMMAND\""; fi)
 
 agents:
   writer:
@@ -783,6 +870,13 @@ info "Created projects/$PROJECT_KEY/config.yaml"
     echo "  \"tasks\": ["
 
     if [[ "$FEATURES_MODE" == "existing" ]]; then
+        if [[ "$TESTING_SURFACE" == "python" ]]; then
+            FEATURE_DEST_DIR="tests/features"
+            STEP_FRAMEWORK="pytest-bdd"
+        else
+            FEATURE_DEST_DIR="e2e/features"
+            STEP_FRAMEWORK="Cucumber"
+        fi
         TASK_NUM=0
         LAST_IDX=$(( ${#FEATURE_SOURCE_PATHS[@]} - 1 ))
         for i in "${!FEATURE_SOURCE_PATHS[@]}"; do
@@ -797,10 +891,10 @@ info "Created projects/$PROJECT_KEY/config.yaml"
     {
       "id": "bdd-$TASK_NUM",
       "title": "Implement step defs for $FNAME",
-      "description": "Implement Cucumber step definitions and Playwright Page Objects for existing feature file: e2e/features/$BASENAME ($SCOUNT scenarios)",
-      "feature_file": "e2e/features/$BASENAME",
+      "description": "Implement $STEP_FRAMEWORK step definitions for existing feature file: $FEATURE_DEST_DIR/$BASENAME ($SCOUNT scenarios)",
+      "feature_file": "$FEATURE_DEST_DIR/$BASENAME",
       "source_feature": "$SRC",
-      "base_url": "$UI_BASE_URL",
+      "base_url": "${UI_BASE_URL:-}",
       "scenario_count": $SCOUNT,
       "status": "pending",
       "attempts": 0,
@@ -956,28 +1050,130 @@ You have these tools from the `agent-bridge` MCP server:
 - If tests pass, report success with scenario counts
 EXECMCP
 
+# --- Python surface MCP sections ---
+IFS= read -r -d '' WRITER_MCP_SECTION_PYTHON <<'WRITERMCPPY' || true
+
+---
+
+## Communication Protocol (MCP-Based)
+
+You are the **WRITER** agent in an automated BDD testing workflow with an AI orchestrator.
+
+### MCP Tools Available
+You have these tools from the `agent-bridge` MCP server:
+
+- **`send_to_executor`** -- Notify Executor that step definitions are ready to run
+  - `summary`: What you wrote/changed
+  - `files_changed`: List of files created or modified
+  - `feature_files`: List of .feature files to test
+  - `dry_run_output`: Output from pytest --collect-only
+
+- **`check_messages`** -- Check your mailbox for orchestrator tasks and Executor feedback
+  - `role`: Always use `"writer"`
+
+- **`list_workspace`** -- See all files in the shared workspace
+
+- **`read_workspace_file`** -- Read a specific file from workspace
+
+### Workflow
+1. Receive a task via `check_messages` (role: `"writer"`)
+2. Read the .feature file to understand all scenarios and steps
+3. Create step definitions in `tests/step_defs/` using pytest-bdd decorators
+4. Add any needed fixtures in `tests/conftest.py`
+5. Validate: `pytest --collect-only`
+6. **Commit your work**: `git add . && git commit -m "feat: add step defs for <feature>"`
+7. Call `send_to_executor` with summary and files changed
+8. Wait -- periodically call `check_messages` with role `"writer"` to get feedback
+
+### Rules
+- ALWAYS commit your code BEFORE calling send_to_executor
+- Use subprocess.run() for CLI testing, direct imports for modules, httpx for APIs
+- Write clear pytest-bdd step definitions matching the Gherkin steps exactly
+- If a task is ambiguous, make reasonable assumptions and document them
+WRITERMCPPY
+
+IFS= read -r -d '' EXECUTOR_MCP_SECTION_PYTHON <<'EXECMCPPY' || true
+
+---
+
+## Communication Protocol (MCP-Based)
+
+You are the **EXECUTOR** agent in an automated BDD testing workflow with an AI orchestrator.
+
+### MCP Tools Available
+You have these tools from the `agent-bridge` MCP server:
+
+- **`send_executor_results`** -- Report test execution results
+  - `status`: `"pass"` or `"fail"`
+  - `summary`: Summary of test results
+  - `scenarios_passed`: Number of scenarios that passed
+  - `scenarios_failed`: Number of scenarios that failed
+  - `failures`: Array of failure details (scenario, step, error, traceback)
+
+- **`check_messages`** -- Check your mailbox for run requests
+  - `role`: Always use `"executor"`
+
+- **`list_workspace`** -- See all files in the shared workspace
+
+- **`read_workspace_file`** -- Read a specific file from workspace
+
+### Workflow
+1. Receive a run request via `check_messages` (role: `"executor"`)
+2. Step definitions are already in your worktree (merged by orchestrator)
+3. Run environment setup if specified
+4. Run: `pytest tests/ -v --tb=short`
+5. Run environment teardown if specified
+6. Analyze results
+7. Call `send_executor_results` with status, summary, and failure details
+
+### Rules
+- Do NOT modify feature files, step definitions, or fixtures
+- If tests fail due to test code bugs (wrong imports, bad assertions): report to Writer
+- If tests fail due to application bugs: report as application issue
+- If tests pass, report success with scenario counts
+- Provide actionable failure details so Writer can fix issues
+EXECMCPPY
+
 # Extract role prompts from BDD prompt file
-# Select Writer prompt based on features mode
-if [[ "$FEATURES_MODE" == "existing" ]]; then
-    WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent_existing/CLAUDE.md")
+# Select Writer prompt based on testing_surface x features_mode
+if [[ "$TESTING_SURFACE" == "python" ]]; then
+    if [[ "$FEATURES_MODE" == "existing" ]]; then
+        WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent_python_existing/CLAUDE.md")
+    else
+        WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent_python/CLAUDE.md")
+    fi
+    EXECUTOR_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "executor_agent_python/CLAUDE.md")
 else
-    WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent/CLAUDE.md")
+    if [[ "$FEATURES_MODE" == "existing" ]]; then
+        WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent_existing/CLAUDE.md")
+    else
+        WRITER_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "writer_agent/CLAUDE.md")
+    fi
+    EXECUTOR_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "executor_agent/CLAUDE.md")
 fi
-EXECUTOR_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "executor_agent/CLAUDE.md")
+
+# Select MCP sections based on testing surface
+if [[ "$TESTING_SURFACE" == "python" ]]; then
+    ACTIVE_WRITER_MCP="$WRITER_MCP_SECTION_PYTHON"
+    ACTIVE_EXECUTOR_MCP="$EXECUTOR_MCP_SECTION_PYTHON"
+else
+    ACTIVE_WRITER_MCP="$WRITER_MCP_SECTION"
+    ACTIVE_EXECUTOR_MCP="$EXECUTOR_MCP_SECTION"
+fi
 
 # --- Writer CLAUDE.md ---
 if [[ -f "$WRITER_DIR/CLAUDE.md" ]]; then
     if grep -q "agent-bridge" "$WRITER_DIR/CLAUDE.md" 2>/dev/null; then
         info "Writer CLAUDE.md already has MCP protocol -- skipped"
     else
-        echo "$WRITER_MCP_SECTION" >> "$WRITER_DIR/CLAUDE.md"
+        echo "$ACTIVE_WRITER_MCP" >> "$WRITER_DIR/CLAUDE.md"
         success "Appended MCP protocol to existing $WRITER_DIR/CLAUDE.md"
     fi
 else
     {
         printf '%s\n\n' "# Writer Agent -- $PROJECT_NAME"
         printf '%s\n' "$WRITER_ROLE_PROMPT"
-        printf '%s\n' "$WRITER_MCP_SECTION"
+        printf '%s\n' "$ACTIVE_WRITER_MCP"
     } > "$WRITER_DIR/CLAUDE.md"
     info "Created $WRITER_DIR/CLAUDE.md"
 fi
@@ -987,14 +1183,14 @@ if [[ -f "$EXECUTOR_DIR/CLAUDE.md" ]]; then
     if grep -q "agent-bridge" "$EXECUTOR_DIR/CLAUDE.md" 2>/dev/null; then
         info "Executor CLAUDE.md already has MCP protocol -- skipped"
     else
-        echo "$EXECUTOR_MCP_SECTION" >> "$EXECUTOR_DIR/CLAUDE.md"
+        echo "$ACTIVE_EXECUTOR_MCP" >> "$EXECUTOR_DIR/CLAUDE.md"
         success "Appended MCP protocol to existing $EXECUTOR_DIR/CLAUDE.md"
     fi
 else
     {
         printf '%s\n\n' "# Executor Agent -- $PROJECT_NAME"
         printf '%s\n' "$EXECUTOR_ROLE_PROMPT"
-        printf '%s\n' "$EXECUTOR_MCP_SECTION"
+        printf '%s\n' "$ACTIVE_EXECUTOR_MCP"
     } > "$EXECUTOR_DIR/CLAUDE.md"
     info "Created $EXECUTOR_DIR/CLAUDE.md"
 fi
