@@ -167,10 +167,11 @@ WIZEOF
 ln -sf "$REPO_DIR" "$WIZARD_TMPDIR/repo"
 
 info "Launching setup wizard..."
-echo "  The wizard will ask you about your testing needs."
+echo ""
+echo "  ${YELLOW}Type 'go' to start the wizard${RESET}"
 echo ""
 
-(cd "$WIZARD_TMPDIR" && claude --dangerously-skip-permissions --append-system-prompt "Start immediately: greet the user briefly and ask about the testing surface (browser or python). Do not wait for instructions -- you already have them in CLAUDE.md.") || true
+(cd "$WIZARD_TMPDIR" && claude --dangerously-skip-permissions) || true
 
 # Read wizard output
 WIZARD_OUTPUT="$WIZARD_TMPDIR/wizard-output.json"
