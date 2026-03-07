@@ -1,6 +1,6 @@
 # BDD E2E Orchestrator
 
-Automated BDD end-to-end testing with two Claude Code agents: Writer creates Gherkin feature files + Playwright step definitions, Executor runs them against a staging URL. A local AI orchestrator routes tasks and manages git merges.
+Automated BDD testing with two Claude Code agents: Writer creates Gherkin feature files + step definitions, Executor runs them. Supports two testing surfaces: **browser** (Playwright + Cucumber) for web UI testing, and **python** (pytest-bdd) for CLI, API, and module testing. A local AI orchestrator routes tasks and manages git merges.
 
 ## Architecture
 
@@ -28,11 +28,11 @@ Automated BDD end-to-end testing with two Claude Code agents: Writer creates Ghe
 
 ### BDD Cycle (per task)
 
-1. Orchestrator assigns a page to Writer
-2. **Writer** creates `.feature` file + step definitions + Page Objects
-3. Writer validates with `npx cucumber-js --dry-run`, commits, calls `send_to_executor`
+1. Orchestrator assigns a task to Writer
+2. **Writer** creates `.feature` file + step definitions (+ Page Objects for browser surface)
+3. Writer validates (`npx cucumber-js --dry-run` or `pytest --collect-only`), commits, calls `send_to_executor`
 4. Orchestrator merges `writer/<task>` into Executor's worktree
-5. **Executor** runs `npx cucumber-js` against the staging URL
+5. **Executor** runs tests (`npx cucumber-js` for browser, `pytest` for python)
 6. Executor reports pass/fail via `send_executor_results`
 7. **Pass**: Orchestrator merges `executor/<task>` into main, advances to next task
 8. **Fail**: Orchestrator routes failure details back to Writer for fixes (up to 5 retries)
@@ -49,6 +49,15 @@ IDLE -> WAITING_WRITER -> WAITING_EXECUTOR -> IDLE (next task)
 ```
 main -> writer/<task> -> merge into executor -> executor/<task> -> merge into main
 ```
+
+## Testing Surfaces
+
+| Surface | Framework | Language | Use Case |
+|---------|-----------|----------|----------|
+| `browser` (default) | Playwright + Cucumber | TypeScript | Web UI E2E testing |
+| `python` | pytest-bdd | Python | CLI, API, module, agent testing |
+
+The wizard asks which surface to use. Browser projects get `e2e/` with Playwright scaffolding. Python projects get `tests/` with pytest-bdd scaffolding. The orchestrator automatically adapts instructions and test commands to the selected surface.
 
 ## Two Modes
 
@@ -99,6 +108,7 @@ tmux:
   session_name: my-app
 
 repo_dir: ~/Repositories/my-app
+testing_surface: "browser"  # "browser" (Playwright+Cucumber) or "python" (pytest-bdd)
 
 ui:
   base_url: https://staging.example.com
@@ -114,6 +124,7 @@ env_setup:
   teardown_command: ""
 
 features_mode: "new"  # "new" (write features from scratch) or "existing" (reuse .feature files)
+# test_command: "pytest tests/ -v --tb=short"  # python surface only
 
 agents:
   writer:

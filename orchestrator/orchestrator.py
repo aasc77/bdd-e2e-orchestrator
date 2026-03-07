@@ -80,6 +80,8 @@ mailbox_dir = str(root_dir / "shared" / args.project / "mailbox")
 tasks_path = project_dir / "tasks.json"
 repo_dir = config.get("repo_dir", "")
 features_mode = config.get("features_mode", "new")
+testing_surface = config.get("testing_surface", "browser")
+test_command = config.get("test_command", "pytest tests/ -v --tb=short")
 
 # --- Setup Logging ---
 logging.basicConfig(
@@ -632,7 +634,45 @@ def assign_task_to_writer(task: dict):
     global_creds = test_data.get("global", {}).get("credentials", {})
     page_test_data = test_data.get("pages", {}).get(page_url, {})
 
-    if features_mode == "existing":
+    if testing_surface == "python":
+        # --- Python surface instructions ---
+        feature_file = task.get("feature_file", "")
+        if features_mode == "existing":
+            instructions = (
+                f"Implement pytest-bdd step definitions for the existing "
+                f"feature file: {feature_file}. "
+                f"FIRST: Read the feature file to understand all scenarios and steps. "
+                "Create step definitions in tests/step_defs/ using @given, @when, @then decorators. "
+                "Use subprocess.run() for CLI testing, direct imports for modules, httpx for APIs. "
+                "Do NOT modify the existing .feature file. "
+                "Validate with: pytest --collect-only. "
+                "When ready, commit and use send_to_executor to hand off."
+            )
+        else:
+            instructions = (
+                f"Write BDD feature files and pytest-bdd step definitions. "
+            )
+            if test_focus:
+                instructions += f"Focus on testing: {test_focus}. "
+            if acceptance_criteria:
+                instructions += "Acceptance criteria:\n" + "\n".join(f"- {ac}" for ac in acceptance_criteria) + "\n"
+            instructions += (
+                "Create: (1) a .feature file in tests/features/, (2) step definitions in tests/step_defs/. "
+                "Use subprocess.run() for CLI testing, direct imports for modules, httpx for APIs. "
+                "Validate with: pytest --collect-only. "
+                "When ready, commit and use send_to_executor to hand off."
+            )
+
+        content = {
+            "task_id": task["id"],
+            "title": task["title"],
+            "description": task["description"],
+            "feature_file": feature_file,
+            "base_url": base_url,
+            "test_data": {"credentials": global_creds},
+            "instructions": instructions,
+        }
+    elif features_mode == "existing":
         feature_file = task.get("feature_file", "")
         instructions = (
             f"Implement Cucumber step definitions and Playwright Page Objects for the existing "
@@ -755,10 +795,17 @@ def handle_writer_message(message: dict):
     )
     if setup_cmd.strip():
         executor_instructions += f"BEFORE running tests, execute environment setup: {setup_cmd}. If setup fails, report failure immediately. "
-    executor_instructions += (
-        f"Run the Cucumber tests against the staging URL ({base_url}): "
-        "npx cucumber-js --format progress --format json:reports/results.json. "
-    )
+
+    if testing_surface == "python":
+        executor_instructions += (
+            f"Run the pytest-bdd tests: {test_command}. "
+        )
+    else:
+        executor_instructions += (
+            f"Run the Cucumber tests against the staging URL ({base_url}): "
+            "npx cucumber-js --format progress --format json:reports/results.json. "
+        )
+
     if teardown_cmd.strip():
         executor_instructions += f"AFTER tests (regardless of pass/fail), run teardown: {teardown_cmd}. "
     executor_instructions += "Report results using the send_executor_results MCP tool."
@@ -839,7 +886,22 @@ def handle_executor_message(message: dict):
             print(f"   Failed {task['attempts']} times. Check orchestrator.log.\n")
             log_to_report(f"**TASK STUCK: {task['id']}** -- exceeded max attempts ({task['attempts']})\n")
         else:
-            if features_mode == "existing":
+            if testing_surface == "python":
+                if features_mode == "existing":
+                    fix_instructions = (
+                        "The Executor reported test failures. Review the failure details, "
+                        "fix the step definitions or fixtures (do NOT modify the .feature file), "
+                        "then commit and use send_to_executor to hand off again."
+                    )
+                    fix_message = "Tests failed. Fix the step definitions or fixtures and re-send."
+                else:
+                    fix_instructions = (
+                        "The Executor reported test failures. Review the failure details, "
+                        "fix the issues in feature files, step definitions, or fixtures, "
+                        "then commit and use send_to_executor to hand off again."
+                    )
+                    fix_message = "Tests failed. Fix the feature files, step definitions, or fixtures and re-send."
+            elif features_mode == "existing":
                 fix_instructions = (
                     "The Executor reported test failures. Review the failure details, "
                     "fix the step definitions or Page Objects (do NOT modify the .feature file), "
