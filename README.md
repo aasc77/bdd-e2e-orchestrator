@@ -59,13 +59,9 @@ main -> writer/<task> -> merge into executor -> executor/<task> -> merge into ma
 
 The wizard asks which surface to use. Browser projects get `e2e/` with Playwright scaffolding. Python projects get `tests/` with pytest-bdd scaffolding. The orchestrator automatically adapts instructions and test commands to the selected surface.
 
-## Two Modes
+## Setup Wizard
 
-The wizard (`new-project.sh`) presents two options:
-
-1. **PM Pre-Flight** -- Launches Claude Code as a PM agent to generate a PRD from a vague idea. Standalone step that exits after generating `prd.md`.
-
-2. **BDD E2E Testing** -- Launches an agentic setup wizard that guides you through staging URL, pages, test credentials, and environment setup via conversation. Creates worktrees, config, tasks, Playwright+Cucumber scaffolding, and agent CLAUDE.md files.
+Run `scripts/new-project.sh` to launch the agentic setup wizard. It guides you through testing surface, staging URL, pages, test credentials, and environment setup via conversation. Creates worktrees, config, tasks, framework scaffolding, and agent CLAUDE.md files.
 
 ## Prerequisites
 
@@ -199,7 +195,7 @@ bdd-e2e-orchestrator/
 │   └── index.js               # MCP server (send_to_executor, send_executor_results, check_messages)
 ├── scripts/
 │   ├── setup.sh               # Dependency installer
-│   ├── new-project.sh         # Interactive wizard (PM Pre-Flight, BDD E2E)
+│   ├── new-project.sh         # Interactive BDD setup wizard
 │   ├── start.sh               # Launch 3-pane tmux session
 │   ├── stop.sh                # Graceful shutdown
 │   ├── reset.sh               # Reset project state
@@ -209,7 +205,6 @@ bdd-e2e-orchestrator/
 │   ├── BDD PROMPTS.md         # Writer + Executor agent role prompts
 │   ├── CONTEXT.md             # Architecture reference
 │   ├── QUICKSTART.md          # 5-minute setup guide
-│   ├── pm_agent.md            # PM Pre-Flight prompt
 │   ├── wizard_agent.md        # BDD setup wizard agent prompt
 │   └── MCP Bridge Setup Guide.md
 ├── projects/<name>/           # Per-project config and tasks
