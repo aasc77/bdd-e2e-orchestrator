@@ -290,8 +290,8 @@ if [ -f "$COMPOSITE_IMG" ]; then
     echo "  Transparent pane backgrounds (composite image will show through)"
     USE_COMPOSITE=true
 else
-    tmux select-pane -t "$SESSION:qa.0" -P 'bg=colour17'     # writer: dark blue
-    tmux select-pane -t "$SESSION:qa.1" -P 'bg=colour22'     # executor: dark green
+    tmux select-pane -t "$SESSION:qa.0" -P 'bg=colour233'     # writer: near-black
+    tmux select-pane -t "$SESSION:qa.1" -P 'bg=colour233'     # executor: near-black
     tmux select-pane -t "$SESSION:qa.2" -P 'bg=colour233'    # orch: near-black
     echo "  Solid color pane backgrounds"
     USE_COMPOSITE=false
@@ -322,9 +322,9 @@ echo "================================"
 echo "BDD E2E Session '$SESSION' is running! (project: $PROJECT)"
 echo ""
 echo "Panes:"
-echo "  0: WRITER    - Writer agent (top-left)      [dark blue bg]"
-echo "  1: EXECUTOR  - Executor agent (top-right)   [dark green bg]"
-echo "  2: ORCH      - Orchestrator (bottom)         [near-black bg]"
+echo "  0: WRITER    - Writer agent (top-left)"
+echo "  1: EXECUTOR  - Executor agent (top-right)"
+echo "  2: ORCH      - Orchestrator (bottom)"
 echo ""
 echo "Git branches:"
 echo "  Writer:   writer/$TASK_ID"
