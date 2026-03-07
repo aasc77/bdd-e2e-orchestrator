@@ -170,7 +170,7 @@ info "Launching setup wizard..."
 echo "  The wizard will ask you about your testing needs."
 echo ""
 
-(cd "$WIZARD_TMPDIR" && claude --dangerously-skip-permissions) || true
+(cd "$WIZARD_TMPDIR" && claude --dangerously-skip-permissions --append-system-prompt "Start immediately: greet the user briefly and ask about the testing surface (browser or python). Do not wait for instructions -- you already have them in CLAUDE.md.") || true
 
 # Read wizard output
 WIZARD_OUTPUT="$WIZARD_TMPDIR/wizard-output.json"
